@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Github } from 'lucide-react'
+import { Github, Columns2, Eye } from 'lucide-react'
 import { ModelEditor, type EditorError } from '@/components/ModelEditor'
 import { SolutionPanel } from '@/components/SolutionPanel'
 import { SyntaxHelp } from '@/components/SyntaxHelp'
 import { ModeToggle } from '@/components/ModeToggle'
 import { VisualEditor } from '@/components/VisualEditor'
 import { ExamplesButton } from '@/components/ExamplesButton'
+import { ModelLibraryButton } from '@/components/ModelLibraryButton'
+import { ScenarioComparison } from '@/components/ScenarioComparison'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { DEFAULT_SOURCE } from '@/data/examples'
 import { solve } from '@/solver/solve'
 import { SolverError } from '@/solver/errors'
+import { PARAMS_KEY } from '@/lib/saved-models'
 import type { Solution } from '@/solver/model'
 
 /**
@@ -22,6 +25,11 @@ import type { Solution } from '@/solver/model'
  * 因为求解入口只有 `solve(source)` 一个纯函数，迁移成本很低。
  *
  * 输入用 300ms 防抖：连续敲键盘时不重解，避免结果面板闪烁。
+ *
+ * ## 右面板两个视图
+ *
+ * - **单次求解**：传统的「写模型 → 看结果」视图（SolutionPanel）。
+ * - **场景对比**：用户标记参数的常量后，填入多组参数值，结果以表格形式并列展示。
  */
 
 const STORAGE_KEY = 'opti-calc:source'
@@ -29,6 +37,7 @@ const MODE_KEY = 'opti-calc:mode'
 const GITHUB_URL = 'https://github.com/xrl/opti-calc'
 
 type EditorMode = 'simple' | 'expert'
+type RightView = 'solve' | 'compare'
 
 /**
  * 求解一次，把结果或错误收敛成单一状态。
@@ -70,6 +79,13 @@ export function App() {
   const debounced = useDebouncedValue(source, 300)
   const outcome = useMemo(() => runSolve(debounced), [debounced])
 
+  // 参数标记：哪些常量名被标记为「参数」
+  const [paramNames, setParamNames] = useLocalStorage<string[]>(PARAMS_KEY, [])
+  const paramNamesSet = useMemo(() => new Set(paramNames), [paramNames])
+
+  // 右面板视图：单次求解 or 场景对比
+  const [rightView, setRightView] = useState<RightView>('solve')
+
   const handleLoadExample = useCallback(
     (next: string) => {
       setSource(next)
@@ -86,11 +102,28 @@ export function App() {
     }
   }, [])
 
+  const handleParamNamesChange = useCallback(
+    (names: Set<string>) => {
+      setParamNames([...names])
+    },
+    [setParamNames],
+  )
+
+  const handleLoadModel = useCallback(
+    (newSource: string, newParamNames: string[]) => {
+      setSource(newSource)
+      setParamNames(newParamNames)
+      setRightView('solve')
+    },
+    [setSource, setParamNames],
+  )
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
           <h1 className="mr-auto text-sm font-semibold">OptiCalc</h1>
+          <ModelLibraryButton source={source} paramNames={paramNames} onLoad={handleLoadModel} />
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -115,7 +148,13 @@ export function App() {
           </div>
 
           {mode === 'simple' ? (
-            <VisualEditor source={source} onChange={setSource} error={outcome.error} />
+            <VisualEditor
+              source={source}
+              onChange={setSource}
+              error={outcome.error}
+              paramNames={paramNamesSet}
+              onParamNamesChange={handleParamNamesChange}
+            />
           ) : (
             <ModelEditor value={source} onChange={setSource} error={outcome.error} />
           )}
@@ -130,15 +169,46 @@ export function App() {
         </section>
 
         <section>
-          <h2 className="mb-3 text-sm font-medium">结果</h2>
-          <SolutionPanel
-            solution={outcome.solution}
-            objectiveLabel={
-              outcome.solution?.objectiveSense
-                ? (OBJECTIVE_LABEL[outcome.solution.objectiveSense] ?? '目标值')
-                : '目标值'
-            }
-          />
+          <div className="mb-3 flex items-center gap-2">
+            <h2 className="mr-auto text-sm font-medium">结果</h2>
+            <div className="inline-flex rounded-md border bg-muted p-0.5">
+              <button
+                className={`inline-flex items-center gap-1 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
+                  rightView === 'solve'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                onClick={() => setRightView('solve')}
+              >
+                <Eye className="size-3" />
+                单次
+              </button>
+              <button
+                className={`inline-flex items-center gap-1 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
+                  rightView === 'compare'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                onClick={() => setRightView('compare')}
+              >
+                <Columns2 className="size-3" />
+                对比
+              </button>
+            </div>
+          </div>
+
+          {rightView === 'solve' ? (
+            <SolutionPanel
+              solution={outcome.solution}
+              objectiveLabel={
+                outcome.solution?.objectiveSense
+                  ? (OBJECTIVE_LABEL[outcome.solution.objectiveSense] ?? '目标值')
+                  : '目标值'
+              }
+            />
+          ) : (
+            <ScenarioComparison source={debounced} paramNames={paramNames} />
+          )}
         </section>
       </main>
 

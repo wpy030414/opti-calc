@@ -55,6 +55,10 @@ export interface VisualEditorProps {
   source: string
   onChange: (source: string) => void
   error?: EditorError | null
+  /** 哪些常量名被标记为参数（在对比视图中可变）。 */
+  paramNames: Set<string>
+  /** 参数标记变更回调。 */
+  onParamNamesChange: (names: Set<string>) => void
 }
 
 // ── constants ──────────────────────────────────────────────────────
@@ -228,7 +232,13 @@ function tryDecompile(source: string): VisualModel | null {
 
 // ── component ──────────────────────────────────────────────────────
 
-export function VisualEditor({ source, onChange, error: _error }: VisualEditorProps) {
+export function VisualEditor({
+  source,
+  onChange,
+  error: _error,
+  paramNames,
+  onParamNamesChange,
+}: VisualEditorProps) {
   const [model, setModel] = useState<VisualModel>(() => {
     const m = tryDecompile(source)
     return m ?? emptyModel()
@@ -360,38 +370,71 @@ export function VisualEditor({ source, onChange, error: _error }: VisualEditorPr
       {/* ── constants ──────────────────────────────────────── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-xs font-medium">常量</CardTitle>
+          <div className="flex items-center gap-3">
+            <CardTitle className="text-xs font-medium">常量</CardTitle>
+            <span className="text-[10px] text-muted-foreground">参数</span>
+          </div>
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={addConstant}>
             <Plus className="size-3" /> 添加
           </Button>
         </CardHeader>
         {model.constants.length > 0 ? (
           <CardContent className="space-y-2 pt-0">
-            {model.constants.map((c) => (
-              <div key={c.id} className="flex items-center gap-1.5">
-                <input
-                  className={inputCls + ' w-24'}
-                  placeholder="名称"
-                  value={c.name}
-                  onChange={(e) => updateConstant(c.id, { name: e.target.value })}
-                />
-                <span className="text-xs text-muted-foreground shrink-0">:=</span>
-                <input
-                  className={inputCls + ' flex-1'}
-                  placeholder="表达式，如 34 / 10"
-                  value={c.expression}
-                  onChange={(e) => updateConstant(c.id, { expression: e.target.value })}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="size-7 p-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeConstant(c.id)}
-                >
-                  <Trash2 className="size-3" />
-                </Button>
-              </div>
-            ))}
+            {model.constants.map((c) => {
+              const name = c.name.trim()
+              const isParam = name !== '' && paramNames.has(name)
+              return (
+                <div key={c.id} className="flex items-center gap-1.5">
+                  <label
+                    className="flex shrink-0 cursor-pointer items-center"
+                    title={
+                      name ? '标记为参数：可在对比视图中为不同场景填入不同值' : '请先填写常量名称'
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-3.5 accent-violet-600"
+                      checked={isParam}
+                      disabled={name === ''}
+                      onChange={() => {
+                        if (!name) return
+                        const next = new Set(paramNames)
+                        if (isParam) {
+                          next.delete(name)
+                        } else {
+                          next.add(name)
+                        }
+                        onParamNamesChange(next)
+                      }}
+                    />
+                  </label>
+                  <input
+                    className={inputCls + ' w-24'}
+                    placeholder="名称"
+                    value={c.name}
+                    onChange={(e) => updateConstant(c.id, { name: e.target.value })}
+                  />
+                  <span className="text-xs text-muted-foreground shrink-0">:=</span>
+                  <input
+                    className={inputCls + ' flex-1'}
+                    placeholder="表达式，如 34 / 10"
+                    value={c.expression}
+                    onChange={(e) => updateConstant(c.id, { expression: e.target.value })}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-7 p-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => removeConstant(c.id)}
+                  >
+                    <Trash2 className="size-3" />
+                  </Button>
+                </div>
+              )
+            })}
+            <p className="text-[10px] text-muted-foreground">
+              勾选「参数」后，该常量在对比视图中可填入多组不同值。
+            </p>
           </CardContent>
         ) : (
           <CardContent className="pt-0">

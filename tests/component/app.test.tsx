@@ -265,15 +265,17 @@ describe('App 渲染验收', () => {
     expect(gh).not.toBeNull()
   })
 
-  it('header 不含任何按钮，示例按钮在编辑器标题区域', () => {
+  it('header 包含模型库和 GitHub 链接，示例按钮在编辑器标题区域', () => {
     root = mount(container)
     const header = container.querySelector('header')!
-    expect(header.querySelector('button')).toBeNull()
+    // header 中有模型库按钮和 GitHub 链接
+    const buttons = Array.from(header.querySelectorAll('button'))
+    expect(buttons.some((b) => b.textContent?.includes('模型库'))).toBe(true)
 
     const main = container.querySelector('main')!
     // 示例下拉触发器在主区域
-    const buttons = Array.from(main.querySelectorAll('button'))
-    expect(buttons.some((b) => b.textContent === '示例')).toBe(true)
+    const mainButtons = Array.from(main.querySelectorAll('button'))
+    expect(mainButtons.some((b) => b.textContent === '示例')).toBe(true)
   })
 
   it('切换到简易模式后渲染 VisualEditor 表单', async () => {
