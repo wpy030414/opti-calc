@@ -1,12 +1,14 @@
-import { useCallback, useMemo } from 'react'
-import { Sigma } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
+import { Github } from 'lucide-react'
 import { ModelEditor, type EditorError } from '@/components/ModelEditor'
 import { SolutionPanel } from '@/components/SolutionPanel'
 import { SyntaxHelp } from '@/components/SyntaxHelp'
-import { Toolbar } from '@/components/Toolbar'
+import { ModeToggle } from '@/components/ModeToggle'
+import { VisualEditor } from '@/components/VisualEditor'
+import { ExamplesButton } from '@/components/ExamplesButton'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
-import { DEFAULT_SOURCE, EXAMPLES } from '@/data/examples'
+import { DEFAULT_SOURCE } from '@/data/examples'
 import { solve } from '@/solver/solve'
 import { SolverError } from '@/solver/errors'
 import type { Solution } from '@/solver/model'
@@ -23,6 +25,10 @@ import type { Solution } from '@/solver/model'
  */
 
 const STORAGE_KEY = 'opti-calc:source'
+const MODE_KEY = 'opti-calc:mode'
+const GITHUB_URL = 'https://github.com/xrl/opti-calc'
+
+type EditorMode = 'simple' | 'expert'
 
 /**
  * 求解一次，把结果或错误收敛成单一状态。
@@ -48,12 +54,21 @@ const OBJECTIVE_LABEL: Record<string, string> = {
   min: '最小值',
 }
 
+function readMode(): EditorMode {
+  try {
+    const raw = window.localStorage.getItem(MODE_KEY)
+    if (raw === '"simple"') return 'simple'
+  } catch {
+    // ignore
+  }
+  return 'expert'
+}
+
 export function App() {
   const [source, setSource] = useLocalStorage<string>(STORAGE_KEY, DEFAULT_SOURCE)
+  const [mode, setMode] = useState<EditorMode>(readMode)
   const debounced = useDebouncedValue(source, 300)
   const outcome = useMemo(() => runSolve(debounced), [debounced])
-
-  const activeExampleId = useMemo(() => EXAMPLES.find((e) => e.source === source)?.id, [source])
 
   const handleLoadExample = useCallback(
     (next: string) => {
@@ -62,58 +77,56 @@ export function App() {
     [setSource],
   )
 
-  const handleCopy = useCallback(() => {
-    // navigator.clipboard 在非 HTTPS 或旧浏览器上不可用，退回 execCommand
-    void navigator.clipboard?.writeText(source).catch(() => {
-      const ta = document.createElement('textarea')
-      ta.value = source
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-    })
-  }, [source])
-
-  const handleClear = useCallback(() => {
-    setSource('')
-  }, [setSource])
+  const handleModeChange = useCallback((next: EditorMode) => {
+    setMode(next)
+    try {
+      window.localStorage.setItem(MODE_KEY, JSON.stringify(next))
+    } catch {
+      // ignore
+    }
+  }, [])
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
-          <div className="flex size-8 items-center justify-center rounded-md bg-slate-900 text-sky-400 dark:bg-slate-100 dark:text-slate-900">
-            <Sigma className="size-4" />
-          </div>
-          <div className="mr-auto">
-            <h1 className="text-sm font-semibold">opti-calc</h1>
-            <p className="text-xs text-muted-foreground">
-              多元方程组与最优化求解编辑器 · 精确有理数运算，无浮点误差
-            </p>
-          </div>
-          <Toolbar
-            onLoadExample={handleLoadExample}
-            onCopy={handleCopy}
-            onClear={handleClear}
-            activeExampleId={activeExampleId}
-            canCopy={source.length > 0}
-          />
+          <h1 className="mr-auto text-sm font-semibold">OptiCalc</h1>
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            aria-label="GitHub 仓库"
+          >
+            <Github className="size-4" />
+            <span className="hidden sm:inline">GitHub</span>
+          </a>
         </div>
       </header>
 
       <main className="mx-auto grid max-w-7xl gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <section className="space-y-3">
-          <div className="flex items-baseline justify-between gap-2">
-            <h2 className="text-sm font-medium">模型</h2>
-            <span className="text-xs text-muted-foreground">一行一条，自动求解</span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-medium">模型</h2>
+              <ModeToggle mode={mode} onModeChange={handleModeChange} />
+            </div>
+            <ExamplesButton onLoadExample={handleLoadExample} />
           </div>
-          <ModelEditor value={source} onChange={setSource} error={outcome.error} />
+
+          {mode === 'simple' ? (
+            <VisualEditor source={source} onChange={setSource} error={outcome.error} />
+          ) : (
+            <ModelEditor value={source} onChange={setSource} error={outcome.error} />
+          )}
+
           {outcome.error ? (
             <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               第 {outcome.error.line} 行：{outcome.error.message}
             </p>
           ) : null}
-          <SyntaxHelp />
+
+          {mode === 'expert' ? <SyntaxHelp /> : null}
         </section>
 
         <section>

@@ -87,7 +87,7 @@ describe('App 渲染验收', () => {
 
   it('挂载后渲染出标题与编辑器，无异常抛出', () => {
     root = mount(container)
-    expect(container.querySelector('h1')?.textContent).toContain('opti-calc')
+    expect(container.querySelector('h1')?.textContent).toContain('OptiCalc')
     // textarea 是输入层，必须存在且带默认模型
     const ta = container.querySelector('textarea')
     expect(ta).not.toBeNull()
@@ -122,7 +122,7 @@ describe('App 渲染验收', () => {
     expect(text).toContain('第 2 行')
     expect(text).toContain('EOF')
     // 即使报错，页面骨架仍在
-    expect(container.querySelector('h1')?.textContent).toContain('opti-calc')
+    expect(container.querySelector('h1')?.textContent).toContain('OptiCalc')
     expect(container.querySelector('textarea')).not.toBeNull()
   })
 
@@ -200,7 +200,7 @@ describe('App 渲染验收', () => {
 
     const ta = container.querySelector('textarea') as HTMLTextAreaElement
     expect(ta.value).toBe(DEFAULT_SOURCE)
-    expect(container.querySelector('h1')?.textContent).toContain('opti-calc')
+    expect(container.querySelector('h1')?.textContent).toContain('OptiCalc')
   })
 
   it('无解模型显示可操作的提示', async () => {
@@ -240,5 +240,184 @@ describe('App 渲染验收', () => {
     const text = container.textContent ?? ''
     expect(text).toContain('近似')
     expect(text).toContain('损失率')
+  })
+
+  // ── 新需求验收 ────────────────────────────────────────────────
+
+  it('header 只有标题 OptiCalc 与 GitHub 链接，无 favicon 图片', () => {
+    root = mount(container)
+    const header = container.querySelector('header')
+    expect(header).not.toBeNull()
+
+    // 标题
+    expect(header!.querySelector('h1')?.textContent).toBe('OptiCalc')
+
+    // 无 favicon img
+    const img = header!.querySelector('img')
+    expect(img).toBeNull()
+
+    // 无副标题
+    expect(header!.textContent).not.toContain('多元方程组')
+    expect(header!.textContent).not.toContain('无浮点误差')
+
+    // GitHub 链接
+    const gh = header!.querySelector('a[aria-label="GitHub 仓库"]')
+    expect(gh).not.toBeNull()
+  })
+
+  it('header 不含任何按钮，示例按钮在编辑器标题区域', () => {
+    root = mount(container)
+    const header = container.querySelector('header')!
+    expect(header.querySelector('button')).toBeNull()
+
+    const main = container.querySelector('main')!
+    // 示例下拉触发器在主区域
+    const buttons = Array.from(main.querySelectorAll('button'))
+    expect(buttons.some((b) => b.textContent === '示例')).toBe(true)
+  })
+
+  it('切换到简易模式后渲染 VisualEditor 表单', async () => {
+    root = mount(container)
+    await flush()
+
+    // 点击"简易"切换
+    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '简易',
+    ) as HTMLElement | undefined
+    expect(simpleBtn).toBeTruthy()
+    await act(async () => {
+      simpleBtn!.click()
+    })
+
+    // VisualEditor 应该显示常量、变量、约束、目标四个 Card
+    // CardTitle 渲染为 <div>（shadcn/ui 设计），不是 <h3>
+    const text = container.textContent ?? ''
+    expect(text).toContain('常量')
+    expect(text).toContain('变量')
+    expect(text).toContain('约束')
+    expect(text).toContain('目标')
+  })
+
+  it('简易模式下添加变量后切换到专家模式，textarea 包含对应 DSL', async () => {
+    root = mount(container)
+    await flush()
+
+    // 先清空编辑器以从干净状态开始
+    await setInput(container.querySelector('textarea') as HTMLTextAreaElement, '')
+    await flush()
+
+    // 切换到简易模式
+    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '简易',
+    ) as HTMLElement | undefined
+    await act(async () => {
+      simpleBtn!.click()
+    })
+
+    // 找到变量卡片中的"添加"按钮
+    const addButtons = Array.from(container.querySelectorAll('button')).filter((b) =>
+      b.textContent?.includes('添加'),
+    )
+    // 常量卡片在前，变量是第二个
+    const addVarBtnEl = addButtons[1] ?? addButtons[0]
+    await act(async () => {
+      addVarBtnEl!.click()
+    })
+
+    // 填写变量名
+    const nameInput = container.querySelector('input[placeholder="变量名"]') as HTMLInputElement
+    expect(nameInput).toBeTruthy()
+    await act(async () => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      nativeSetter?.call(nameInput, '测试变量')
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+
+    // 切换回专家模式
+    const expertBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '专家',
+    ) as HTMLElement | undefined
+    await act(async () => {
+      expertBtn!.click()
+    })
+
+    // textarea 中应包含编译出的 DSL
+    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(ta.value).toContain('测试变量')
+    expect(ta.value).toContain('实数')
+  })
+
+  it('加载示例后在简易模式下正确反编译', async () => {
+    root = mount(container)
+    await flush()
+
+    // 切换到简易模式
+    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '简易',
+    ) as HTMLElement | undefined
+    await act(async () => {
+      simpleBtn!.click()
+    })
+
+    // 默认源应被反编译 — 至少有一个变量名输入框已填充
+    const inputs = container.querySelectorAll('input')
+    const filledNames = Array.from(inputs).filter(
+      (i) => (i as HTMLInputElement).value && (i as HTMLInputElement).placeholder === '变量名',
+    )
+    expect(filledNames.length).toBeGreaterThan(0)
+  })
+
+  it('模式持久化到 localStorage', async () => {
+    root = mount(container)
+    await flush()
+
+    // 切换到简易
+    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '简易',
+    ) as HTMLElement | undefined
+    await act(async () => {
+      simpleBtn!.click()
+    })
+
+    const stored = window.localStorage.getItem('opti-calc:mode')
+    expect(stored).toBe(JSON.stringify('simple'))
+  })
+
+  it('语法速查仅在专家模式下显示', async () => {
+    root = mount(container)
+    await flush()
+
+    // 默认专家模式，语法速查应存在
+    expect(container.textContent).toContain('语法速查')
+
+    // 切换到简易模式
+    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '简易',
+    ) as HTMLElement | undefined
+    await act(async () => {
+      simpleBtn!.click()
+    })
+
+    // 简易模式下语法速查不应出现
+    expect(container.textContent).not.toContain('语法速查')
+  })
+
+  it('语法速查默认展开', () => {
+    root = mount(container)
+    // 无需点击"展开"即可看到内容
+    expect(container.textContent).toContain('语法速查')
+    expect(container.textContent).toContain('变量声明')
+  })
+
+  it('示例按钮不显示选中示例名称', () => {
+    root = mount(container)
+    const exampleBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === '示例',
+    )
+    expect(exampleBtn).toBeTruthy()
+    // 不应出现 "· 某标题" 后缀
+    expect(exampleBtn!.textContent).not.toContain('·')
   })
 })

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 /**
  * 语法速查。
  *
- * 折叠式，默认收起——一般用户靠示例入门就够了，只有想写新模型时才需要展开。
+ * 仅在专家模式下显示，默认展开——帮助新用户快速了解 DSL 语法。
  * 内容按「最常写错的顺序」排列：变量声明、约束、目标、常量、注释。
  */
 
@@ -35,7 +35,7 @@ const SNIPPETS: { title: string; code: string; note: string }[] = [
 ]
 
 export function SyntaxHelp() {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
 
   return (
     <Card>
