@@ -6,22 +6,36 @@ import { buildModel, collectVariables } from './linearize'
 import { solveLinearSystem, describeRank, type LinearSystemResult } from './gaussian'
 import { standardize, denormalize } from './standardize'
 import { solveMilp } from './milp'
-import type { Constraint, Model, Solution, SolveStatus, VarDecl } from './model'
+import type { Constraint, Model, Solution, SolveStatus } from './model'
 
 /**
- * 求解编排层。
+ * 求解编排层。内核唯一入口：`solve(文本) → Solution`。
  *
- * 这是整个内核的唯一入口：`solve(文本) → Solution`。三条路径按模型形态自动选择：
+ * ## 职责划分
  *
- * | 模型形态 | 路径 | 语义 |
- * |---|---|---|
- * | 无目标函数，等式为主 | 高斯消元（精确 RREF） | 「求定点」——直接解出未知数 |
- * | 无目标函数，解不唯一 | 高斯消元 + 零目标 MILP 找可行点 | 给出一个满足全部约束的具体解，并说明解集维度 |
- * | 有目标函数 | 标准化 + LP / 分支定界 MILP | 「求最优解」——最大化或最小化 |
+ * - **高斯消元只负责诊断，不负责出解。** 它能区分「唯一 / 无穷多 / 矛盾」并给出解空间维度，
+ *   这是 LP 做不到的——LP 只会返回一个顶点，无法告诉用户「其实还差一个条件」。
+ *   对算账场景这个区别很关键：用户经常是少写了一个条件而不自知。
+ * - **实际解统一由 MILP（或退化的 LP）给出。** 等式、不等式、变量边界、整数约束
+ *   全部走同一条路径，避免两套可行性判定逻辑互相漂移。
  *
- * 无目标路径优先走高斯消元而非 LP，是因为它能区分「唯一解 / 无穷多解 / 无解」并给出
- * 解空间基；LP 只会返回一个顶点，无法告诉用户「其实还差一个条件」。
- * 对算账场景这个区别很关键：用户经常是少写了一个条件而不自知。
+ * ## 路径选择
+ *
+ * | 模型形态 | 行为 |
+ * |---|---|
+ * | 等式系统自相矛盾 | 立即判 infeasible，给出矛盾行（`0 = 非零`） |
+ * | 有目标函数 | 标准化 → LP / 分支定界，返回最优解 |
+ * | 无目标函数 | 零目标 MILP 找一个可行点，再做唯一性探测 |
+ *
+ * ## 唯一性探测
+ *
+ * 对每个变量分别求 `max v` 与 `min v`（按模型是否含整数走 MILP 或 LP）。
+ * 该判据在两个方向上都是严格的：
+ * - 某个变量的 max > min ⟹ 两个极值点在该坐标上不同 ⟹ 确实存在两组不同解；
+ * - 所有变量的 max == min ⟹ 每个变量都被夹死 ⟹ 解唯一。
+ *
+ * 代价是 2n 次求解，因此对变量数设了上限；超限则退回基于矩阵秩的维度估计，
+ * 并明确标注这是估计而非证明。
  */
 
 export interface SolveOptions {
@@ -29,11 +43,13 @@ export interface SolveOptions {
   integer?: boolean
 }
 
+/** 超过该变量数就不再逐变量探测唯一性，改用秩估计。 */
+const UNIQUENESS_PROBE_LIMIT = 40
+
 /** 求解入口。抛出 `SolverError` 子类表示模型有误（携带行号）。 */
 export function solve(source: string, options: SolveOptions = {}): Solution {
   const allowInteger = options.integer !== false
-  const stmts = parse(source)
-  const model = buildModel(stmts)
+  const model = buildModel(parse(source))
   const varNames = collectVariables(model)
 
   if (varNames.length === 0 && model.constraints.length === 0 && !model.objective) {
@@ -41,7 +57,6 @@ export function solve(source: string, options: SolveOptions = {}): Solution {
   }
 
   const warnings: string[] = []
-  // 变量声明中未出现在任何表达式里的，也提示一下（常见笔误）
   for (const v of model.vars) {
     if (!varNames.includes(v.name)) {
       warnings.push(`第 ${v.line} 行：变量「${v.name}」已声明但未在任何约束或目标中使用。`)
@@ -49,71 +64,90 @@ export function solve(source: string, options: SolveOptions = {}): Solution {
   }
 
   const equalities = model.constraints.filter((c) => c.op === '=' || c.op === '==')
-  const inequalities = model.constraints.filter((c) => c.op !== '=' && c.op !== '==')
 
-  if (!model.objective) {
-    return solveWithoutObjective(model, varNames, equalities, inequalities, allowInteger, warnings)
-  }
-  return solveWithObjective(model, varNames, allowInteger, warnings)
-}
-
-/** 无目标函数：求精确解或可行点。 */
-function solveWithoutObjective(
-  model: Model,
-  varNames: string[],
-  equalities: Constraint[],
-  inequalities: Constraint[],
-  allowInteger: boolean,
-  warnings: string[],
-): Solution {
+  // 诊断：等式系统是否自相矛盾。矛盾时无需再跑 LP。
   const sys: LinearSystemResult = solveLinearSystem(equalities, varNames)
-  const stats = {
-    vars: varNames.length,
-    constraints: model.constraints.length,
-    integerVars: model.vars.filter((v) => v.kind !== 'real').length,
-  }
-
   if (sys.kind === 'infeasible') {
     return {
       status: { kind: 'infeasible', reason: sys.reason },
       values: new Map(),
       warnings,
-      stats,
+      stats: makeStats(model, varNames),
     }
   }
 
+  if (model.objective) {
+    return solveWithObjective(model, varNames, allowInteger, warnings, sys)
+  }
+  return solveFeasiblePoint(model, varNames, allowInteger, warnings, sys)
+}
+
+function makeStats(model: Model, varNames: string[], lpNodes?: number): NonNullable<Solution['stats']> {
+  return {
+    vars: varNames.length,
+    constraints: model.constraints.length,
+    integerVars: model.vars.filter((v) => v.kind !== 'real').length,
+    lpNodes,
+  }
+}
+
+/** 无目标函数：找一个可行点，并判定解是否唯一。 */
+function solveFeasiblePoint(
+  model: Model,
+  varNames: string[],
+  allowInteger: boolean,
+  warnings: string[],
+  sys: LinearSystemResult,
+): Solution {
+  const stats = makeStats(model, varNames)
+  const probe = zeroObjectiveModel(model)
+  const std = standardize(probe, varNames)
+  warnings.push(...std.warnings)
+
+  const r = solveMilp(std, allowInteger)
+  stats.lpNodes = r.nodes
+
+  if (r.status !== 'optimal') {
+    const reason = enrichInfeasibleReason(r.reason, sys)
+    return { status: statusOf(r.status, reason), values: new Map(), warnings, stats }
+  }
+
+  const values = denormalize(std, r.x)
+  const report = reportConstraints(values, model.constraints)
+
+  // 等式已把解夹死 → 唯一，无需探测
   if (sys.kind === 'unique') {
-    const feasible = checkFeasible(sys.particular, model, varNames)
-    if (feasible.ok) {
-      return {
-        status: { kind: 'optimal' },
-        values: sys.particular,
-        warnings: [...warnings, describeRank(sys)],
-        constraintReport: reportConstraints(sys.particular, model.constraints),
-        stats,
-      }
-    }
-    // 唯一等式解违反不等式或边界 → 整体不可行
     return {
-      status: { kind: 'infeasible', reason: feasible.reason },
-      values: new Map(),
+      status: { kind: 'optimal' },
+      values,
       warnings: [...warnings, describeRank(sys)],
+      constraintReport: report,
       stats,
     }
   }
 
-  // 无穷多解：用零目标 MILP 找一个满足全部约束的具体解
-  warnings.push(describeRank(sys))
-  warnings.push(
-    `解不唯一，下面给出的是满足全部约束的其中一个解。若要唯一答案，请补充 ${sys.basis.length} 个条件，或写一个 max/min 目标。`,
-  )
-  const fallback = solveWithObjective(
-    { ...model, objective: { sense: 'min', expr: LinExpr.zero(), line: 0 } },
-    varNames,
-    allowInteger,
+  const uniq = probeUniqueness(model, varNames, allowInteger)
+  warnings.push(...uniq.warnings)
+
+  if (uniq.unique) {
+    warnings.push(
+      `解唯一：虽然等式不足以确定全部 ${varNames.length} 个未知数，但不等式与取值范围把它们夹死了。`,
+    )
+  } else {
+    warnings.push(describeRank(sys))
+    warnings.push(
+      `解不唯一，下面给出的是满足全部约束的其中一个解。` +
+        `若要唯一答案，请补充条件，或写一个 max/min 目标来挑出最优的那个。`,
+    )
+  }
+
+  return {
+    status: { kind: 'optimal' },
+    values,
+    constraintReport: report,
     warnings,
-  )
-  return { ...fallback, stats }
+    stats,
+  }
 }
 
 /** 有目标函数：标准化后交给 LP / MILP。 */
@@ -122,31 +156,31 @@ function solveWithObjective(
   varNames: string[],
   allowInteger: boolean,
   warnings: string[],
+  sys: LinearSystemResult,
 ): Solution {
   const std = standardize(model, varNames)
   warnings.push(...std.warnings)
 
   const r = solveMilp(std, allowInteger)
-  const stats = {
-    vars: varNames.length,
-    constraints: model.constraints.length,
-    integerVars: model.vars.filter((v) => v.kind !== 'real').length,
-    lpNodes: r.nodes,
-  }
+  const stats = makeStats(model, varNames, r.nodes)
 
   if (r.status !== 'optimal') {
-    const status: SolveStatus =
-      r.status === 'infeasible'
-        ? { kind: 'infeasible', reason: r.reason }
-        : r.status === 'unbounded'
-          ? { kind: 'unbounded', direction: r.reason }
-          : { kind: 'degenerate', reason: r.reason }
-    return { status, values: new Map(), warnings, stats }
+    const reason = enrichInfeasibleReason(r.reason, sys)
+    return { status: statusOf(r.status, reason), values: new Map(), warnings, stats }
   }
 
   const values = denormalize(std, r.x)
-  // 标准形目标是「min 化后的 cᵀx」，还原为原始 sense 下的目标值
   const objectiveValue = (std.minimize ? r.objective : r.objective.neg()).add(std.objectiveConst)
+
+  const alt = probeAlternativeOptimum(model, varNames, objectiveValue, values, allowInteger)
+  if (alt === 'degenerate') {
+    warnings.push('变量数过多，跳过最优解唯一性探测；可能存在同样最优的另一组取值。')
+  } else if (alt) {
+    warnings.push(
+      `最优解不唯一：目标值同为 ${fmt(objectiveValue)} 的还有另一组取值，` +
+        `例如 ${describeAssignment(alt, varNames)}。`,
+    )
+  }
 
   return {
     status: { kind: 'optimal' },
@@ -158,79 +192,186 @@ function solveWithObjective(
   }
 }
 
-/** 检查赋值是否满足全部不等式约束与变量边界。 */
-function checkFeasible(
-  assign: ReadonlyMap<string, Frac>,
+function statusOf(status: 'infeasible' | 'unbounded' | 'degenerate', reason?: string): SolveStatus {
+  if (status === 'infeasible') return { kind: 'infeasible', reason }
+  if (status === 'unbounded') return { kind: 'unbounded', direction: reason }
+  return { kind: 'degenerate', reason }
+}
+
+/**
+ * 等式系统有唯一实数解、但整体不可行时，补充说明原因。
+ *
+ * 最常见的两种情况是「唯一解不是整数」和「唯一解超出声明范围」，
+ * 单说「无可行解」对用户没有指导意义。
+ */
+function enrichInfeasibleReason(reason: string | undefined, sys: LinearSystemResult): string | undefined {
+  if (sys.kind !== 'unique') return reason
+  const point = describeAssignment(sys.particular, sys.varNames)
+  return `${reason ?? '无可行解'}。等式部分本身有唯一解 ${point}，但它违反了不等式、边界或整数约束。`
+}
+
+function zeroObjectiveModel(model: Model): Model {
+  return { ...model, objective: { sense: 'min', expr: LinExpr.zero(), line: 0 } }
+}
+
+interface UniquenessResult {
+  unique: boolean
+  warnings: string[]
+}
+
+/**
+ * 无目标场景：逐变量求 max/min，判定可行域是否为单点。
+ *
+ * 这里在整个可行域上探测是正确的——用户要的就是「满足约束的解」，
+ * 可行域含多于一点即意味着答案不唯一。
+ *
+ * 变量数超过 `UNIQUENESS_PROBE_LIMIT` 时跳过探测，并在 warning 中说明。
+ */
+function probeUniqueness(
   model: Model,
   varNames: string[],
-): { ok: true } | { ok: false; reason: string } {
-  for (const c of model.constraints) {
-    const diff = c.left.eval(assign).sub(c.right.eval(assign))
-    const ok =
-      c.op === '<='
-        ? diff.le(Frac.ZERO)
-        : c.op === '>='
-          ? diff.ge(Frac.ZERO)
-          : c.op === '<'
-            ? diff.lt(Frac.ZERO)
-            : c.op === '>'
-              ? diff.gt(Frac.ZERO)
-              : diff.eq(Frac.ZERO)
-    if (!ok) {
+  allowInteger: boolean,
+): UniquenessResult {
+  if (varNames.length > UNIQUENESS_PROBE_LIMIT) {
+    return {
+      unique: false,
+      warnings: [`变量数超过 ${UNIQUENESS_PROBE_LIMIT}，跳过解唯一性探测；结果可能不唯一。`],
+    }
+  }
+
+  for (const name of varNames) {
+    const lo = probeVar(model, varNames, name, 'min', allowInteger)
+    const hi = probeVar(model, varNames, name, 'max', allowInteger)
+    if (lo === null || hi === null) {
       return {
-        ok: false,
-        reason: `等式解违反第 ${c.line} 行的约束：代入后左边比右边${diff.isNegative ? '小' : '大'} ${diff.abs().toString()}`,
+        unique: false,
+        warnings: [
+          `变量「${name}」在可行域内无界，因此存在无穷多组解；下面给出的是其中一个。`,
+        ],
+      }
+    }
+    if (hi.gt(lo)) return { unique: false, warnings: [] }
+  }
+  return { unique: true, warnings: [] }
+}
+
+/**
+ * 有目标场景：在「目标值 = 最优值」的切面上探测是否还有别的解。
+ *
+ * 必须加这条等式约束——若在整个可行域上探测，变量只要能动就会误报「最优解不唯一」，
+ * 而实际上那些变动会改变目标值、并非最优。
+ *
+ * 返回：`null` 表示唯一；`'degenerate'` 表示规模过大未探测；否则返回另一组最优解。
+ */
+function probeAlternativeOptimum(
+  model: Model,
+  varNames: string[],
+  objectiveValue: Frac,
+  incumbent: ReadonlyMap<string, Frac>,
+  allowInteger: boolean,
+): Map<string, Frac> | null | 'degenerate' {
+  if (!model.objective || varNames.length > UNIQUENESS_PROBE_LIMIT) return 'degenerate'
+  if (varNames.length === 0) return null
+
+  // 把最优目标值锁成一条等式，后续探测都在这个切面上进行
+  const slice: Model = {
+    ...model,
+    constraints: [
+      ...model.constraints,
+      {
+        left: model.objective.expr,
+        op: '=',
+        right: LinExpr.const(objectiveValue),
+        line: model.objective.line,
+      },
+    ],
+  }
+
+  for (const name of varNames) {
+    const lo = probeVar(slice, varNames, name, 'min', allowInteger)
+    const hi = probeVar(slice, varNames, name, 'max', allowInteger)
+    if (lo === null || hi === null) continue
+    if (hi.gt(lo)) {
+      // 找到可动方向，取 max 端点构造一组与当前解不同的最优解
+      const probeModel: Model = {
+        ...slice,
+        objective: { sense: 'max', expr: LinExpr.var(name), line: 0 },
+      }
+      const std = standardize(probeModel, varNames)
+      const r = solveMilp(std, allowInteger)
+      if (r.status === 'optimal') {
+        const alt = denormalize(std, r.x)
+        if (!sameAssignment(alt, incumbent, varNames)) return alt
       }
     }
   }
+  return null
+}
 
-  const decls = new Map<string, VarDecl>(model.vars.map((v) => [v.name, v]))
-  for (const name of varNames) {
-    const v = assign.get(name) ?? Frac.ZERO
-    const decl = decls.get(name)
-    const isInt = decl ? decl.kind !== 'real' : false
-    if (decl?.lower !== undefined && v.lt(decl.lower)) {
-      return { ok: false, reason: `变量「${name}」= ${fmt(v)}，低于声明的下界 ${fmt(decl.lower)}（第 ${decl.line} 行）` }
-    }
-    if (decl?.upper !== undefined && v.gt(decl.upper)) {
-      return { ok: false, reason: `变量「${name}」= ${fmt(v)}，高于声明的上界 ${fmt(decl.upper)}（第 ${decl.line} 行）` }
-    }
-    if (isInt && v.d !== 1n) {
-      return { ok: false, reason: `变量「${name}」声明为${decl?.kind === 'binary' ? '二元' : '整数'}，但等式解给出 ${fmt(v)}（第 ${decl?.line ?? 0} 行）` }
-    }
-    if (decl?.kind === 'binary' && !v.eq(Frac.ZERO) && !v.eq(Frac.ONE)) {
-      return { ok: false, reason: `变量「${name}」声明为二元（0/1），但等式解给出 ${fmt(v)}（第 ${decl.line} 行）` }
-    }
+function sameAssignment(
+  a: ReadonlyMap<string, Frac>,
+  b: ReadonlyMap<string, Frac>,
+  names: string[],
+): boolean {
+  return names.every((n) => (a.get(n) ?? Frac.ZERO).eq(b.get(n) ?? Frac.ZERO))
+}
+
+/** 求某变量在可行域上的极值；无界或不可行返回 null。 */
+function probeVar(
+  model: Model,
+  varNames: string[],
+  name: string,
+  sense: 'min' | 'max',
+  allowInteger: boolean,
+): Frac | null {
+  const probeModel: Model = {
+    ...model,
+    objective: { sense, expr: LinExpr.var(name), line: 0 },
   }
-  return { ok: true }
+  const std = standardize(probeModel, varNames)
+  const r = solveMilp(std, allowInteger)
+  if (r.status !== 'optimal') return null
+  return (std.minimize ? r.objective : r.objective.neg()).add(std.objectiveConst)
 }
 
 /** 生成约束满足情况报告。 */
-function reportConstraints(assign: ReadonlyMap<string, Frac>, constraints: Constraint[]): Solution['constraintReport'] {
+function reportConstraints(
+  assign: ReadonlyMap<string, Frac>,
+  constraints: Constraint[],
+): Solution['constraintReport'] {
   return constraints.map((c) => {
-    const left = c.left.eval(assign)
-    const right = c.right.eval(assign)
-    const slack = left.sub(right)
-    const satisfied =
-      c.op === '<='
-        ? slack.le(Frac.ZERO)
-        : c.op === '>='
-          ? slack.ge(Frac.ZERO)
-          : c.op === '<'
-            ? slack.lt(Frac.ZERO)
-            : c.op === '>'
-              ? slack.gt(Frac.ZERO)
-              : c.op === '=' || c.op === '=='
-                ? slack.eq(Frac.ZERO)
-                : !slack.eq(Frac.ZERO)
-    const tight = slack.eq(Frac.ZERO)
-    return { name: c.name, slack, tight, satisfied, line: c.line }
+    const slack = c.left.eval(assign).sub(c.right.eval(assign))
+    let satisfied: boolean
+    switch (c.op) {
+      case '<=':
+        satisfied = slack.le(Frac.ZERO)
+        break
+      case '>=':
+        satisfied = slack.ge(Frac.ZERO)
+        break
+      case '<':
+        satisfied = slack.lt(Frac.ZERO)
+        break
+      case '>':
+        satisfied = slack.gt(Frac.ZERO)
+        break
+      case '!=':
+        satisfied = !slack.eq(Frac.ZERO)
+        break
+      default:
+        satisfied = slack.eq(Frac.ZERO)
+    }
+    return { name: c.name, slack, tight: slack.eq(Frac.ZERO), satisfied, line: c.line }
   })
 }
 
-/** 展示用：能有限小数表示就给精确小数，否则给分数。 */
+function describeAssignment(assign: ReadonlyMap<string, Frac>, names: string[]): string {
+  return names.map((n) => `${n} = ${fmt(assign.get(n) ?? Frac.ZERO)}`).join('，')
+}
+
+/** 展示用：能有限小数表示就给精确小数，否则给分数并附近似值。 */
 export function fmt(v: Frac): string {
   if (v.d === 1n) return v.n.toString()
-  if (v.terminates) return v.toDecimalString(10)
-  return `${v.toString()} (≈ ${v.toDecimalString(6)})`
+  if (v.terminates) return v.toDecimalString(12)
+  return `${v.toString()}（≈ ${v.toDecimalString(6)}）`
 }
