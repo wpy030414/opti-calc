@@ -27,13 +27,22 @@ export interface VarDecl {
  */
 export type RelOp = '=' | '!=' | '<' | '<=' | '>' | '>='
 
+/** 一个二次单项：`coef * i * j`（i、j 为变量名，约定 i <= j）。 */
+export interface BilinearTerm {
+  coef: Frac
+  i: string
+  j: string
+}
+
 export interface Constraint {
   /** 约束名（可选，`label:` 前缀）。 */
   name?: string
-  /** 线性表达式（已折叠为 `lhs op rhs` 形式）。 */
+  /** 线性部分（已折叠为 `lhs op rhs` 形式）。 */
   left: import('./linexpr').LinExpr
   op: RelOp
   right: import('./linexpr').LinExpr
+  /** 二次部分，按 `(left - right)` 的符号归并；线性模型为空。 */
+  bilinear?: BilinearTerm[]
   line: number
 }
 
@@ -42,6 +51,8 @@ export type ObjectiveSense = 'max' | 'min'
 export interface Objective {
   sense: ObjectiveSense
   expr: import('./linexpr').LinExpr
+  /** 目标函数中的二次项；线性模型为空。 */
+  bilinear?: BilinearTerm[]
   line: number
 }
 
@@ -87,6 +98,13 @@ export interface Solution {
   varOrder: string[]
   /** 目标方向；无目标时为 undefined。用于决定结果标题写「最大值」还是「最小值」。 */
   objectiveSense?: ObjectiveSense
+  /**
+   * 近似解的质量保证。仅当模型含「连续 × 连续」二次项时出现。
+   *
+   * `relativeGap` 是**损失率的可证明上界**：返回值的真实最优差距不会超过它。
+   * UI 必须据此把结果明确标注为「近似值」。
+   */
+  approximation?: { relativeGap: Frac }
 }
 
 export interface ConstraintReport {

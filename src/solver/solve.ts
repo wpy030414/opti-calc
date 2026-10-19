@@ -6,6 +6,8 @@ import { buildModel, collectVariables } from './linearize'
 import { solveLinearSystem, describeRank, type LinearSystemResult } from './gaussian'
 import { standardize, denormalize } from './standardize'
 import { solveMilp } from './milp'
+import { buildQuadraticProgram } from './bilinear'
+import { solveSpatialBb } from './spatialbb'
 import type { Constraint, Model, Solution, SolveStatus } from './model'
 
 /**
@@ -41,7 +43,15 @@ import type { Constraint, Model, Solution, SolveStatus } from './model'
 export interface SolveOptions {
   /** 允许整数约束求解（分支定界）。关闭则退化为纯 LP。 */
   integer?: boolean
+  /**
+   * 「连续 × 连续」二次项近似求解的相对损失率阈值，默认 1%。
+   * 只影响 B 类项；A 类（整数/二元因子）始终精确。
+   */
+  gapTolerance?: Frac
 }
+
+/** B 类二次项的默认相对损失率阈值：1%。 */
+const DEFAULT_GAP_TOLERANCE = Frac.parse('0.01')
 
 /** 超过该变量数就不再逐变量探测唯一性，改用秩估计。 */
 const UNIQUENESS_PROBE_LIMIT = 40
@@ -69,6 +79,25 @@ export function solve(source: string, options: SolveOptions = {}): Solution {
   for (const v of model.vars) {
     if (!varNames.includes(v.name)) {
       warnings.push(`第 ${v.line} 行：变量「${v.name}」已声明但未在任何约束或目标中使用。`)
+    }
+  }
+
+  // 含二次项：走专门路径（A 类精确线性化 / B 类空间分支定界）。
+  // 非线性下高斯诊断与唯一性探测不成立，因此在这之前分流。
+  const hasBilinear =
+    model.constraints.some((c) => (c.bilinear?.length ?? 0) > 0) ||
+    (model.objective?.bilinear?.length ?? 0) > 0
+  if (hasBilinear) {
+    return {
+      ...solveBilinear(
+        model,
+        varNames,
+        allowInteger,
+        options.gapTolerance ?? DEFAULT_GAP_TOLERANCE,
+        warnings,
+      ),
+      varOrder: varNames,
+      objectiveSense: model.objective?.sense,
     }
   }
 
@@ -107,6 +136,94 @@ function makeStats(
     integerVars: model.vars.filter((v) => v.kind !== 'real').length,
     lpNodes,
   }
+}
+
+/**
+ * 含二次项模型的求解。
+ *
+ * - 全部是 A 类（整数/二元因子）→ 精确线性化后交给 MILP，结果精确。
+ * - 含 B 类（连续 × 连续）→ 空间分支定界，返回近似解与损失率上界。
+ */
+function solveBilinear(
+  model: Model,
+  varNames: string[],
+  allowInteger: boolean,
+  gapTolerance: Frac,
+  warnings: string[],
+): RawSolution {
+  const prog = buildQuadraticProgram(model, varNames, allowInteger)
+  const expandedVars = collectVariables(prog.model)
+  const std = standardize(prog.model, expandedVars)
+  warnings.push(...std.warnings)
+
+  if (prog.bTerms.length === 0) {
+    // 全 A 类：精确线性化后的纯 MILP
+    const r = solveMilp(std, allowInteger)
+    const stats = makeStats(model, varNames, r.nodes)
+    if (r.status !== 'optimal') {
+      return { status: statusOf(r.status, r.reason), values: new Map(), warnings, stats }
+    }
+    const all = denormalize(std, r.x)
+    return {
+      status: { kind: 'optimal' },
+      values: visibleValues(all, prog.internal),
+      objectiveValue: convertObjective(model, std, r.objective),
+      constraintReport: reportConstraints(all, model.constraints),
+      warnings,
+      stats,
+    }
+  }
+
+  // 含 B 类：空间分支定界，结果近似，必须报告损失率
+  const r = solveSpatialBb(std, prog.bTerms, prog.boxes, allowInteger, gapTolerance)
+  const stats = makeStats(model, varNames, r.nodes)
+  if (r.status !== 'optimal') {
+    return { status: statusOf(r.status, r.reason), values: new Map(), warnings, stats }
+  }
+  if (r.reason) warnings.push(r.reason)
+
+  const all = denormalize(std, r.x)
+  const relativeGap = r.relativeGap
+  const approximate = relativeGap !== undefined && relativeGap.gt(Frac.ZERO)
+  if (approximate && relativeGap) {
+    const pct = relativeGap.mul(Frac.parse('100')).toDecimalString(2)
+    warnings.push(
+      `模型含「连续变量相乘」，这是非凸问题，结果为近似值：` +
+        `与真实最优值的相对差距不超过 ${fmt(relativeGap)}（约 ${pct}%）。`,
+    )
+  }
+
+  return {
+    status: { kind: 'optimal' },
+    values: visibleValues(all, prog.internal),
+    objectiveValue: convertObjective(model, std, r.objective),
+    approximation: approximate && relativeGap ? { relativeGap } : undefined,
+    constraintReport: reportConstraints(all, model.constraints),
+    warnings,
+    stats,
+  }
+}
+
+/** min 方向目标值还原为原始目标值（含 max 翻转与常数项）。 */
+function convertObjective(
+  model: Model,
+  std: ReturnType<typeof standardize>,
+  raw: Frac,
+): Frac | undefined {
+  if (!model.objective) return undefined
+  return (std.minimize ? raw : raw.neg()).add(std.objectiveConst)
+}
+
+/** 去掉内部辅助变量，只返回用户可写出的变量。 */
+function visibleValues(
+  all: ReadonlyMap<string, Frac>,
+  internal: ReadonlySet<string>,
+): Map<string, Frac> {
+  const out = new Map<string, Frac>()
+  for (const [name, v] of all) {
+    if (!internal.has(name)) out.set(name, v)
+  }
+  return out
 }
 
 /** 无目标函数：找一个可行点，并判定解是否唯一。 */
@@ -353,13 +470,24 @@ function probeVar(
   return (std.minimize ? r.objective : r.objective.neg()).add(std.objectiveConst)
 }
 
+/** 约束余量：`(left - right)` 的线性部分 + 二次部分。 */
+function constraintSlack(c: Constraint, assign: ReadonlyMap<string, Frac>): Frac {
+  let slack = c.left.eval(assign).sub(c.right.eval(assign))
+  for (const t of c.bilinear ?? []) {
+    const iv = assign.get(t.i) ?? Frac.ZERO
+    const jv = assign.get(t.j) ?? Frac.ZERO
+    slack = slack.add(t.coef.mul(iv).mul(jv))
+  }
+  return slack
+}
+
 /** 生成约束满足情况报告。 */
 function reportConstraints(
   assign: ReadonlyMap<string, Frac>,
   constraints: Constraint[],
 ): Solution['constraintReport'] {
   return constraints.map((c) => {
-    const slack = c.left.eval(assign).sub(c.right.eval(assign))
+    const slack = constraintSlack(c, assign)
     let satisfied: boolean
     switch (c.op) {
       case '<=':

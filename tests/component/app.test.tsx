@@ -216,7 +216,7 @@ describe('App 渲染验收', () => {
     expect(text).toContain('放宽')
   })
 
-  it('非线性模型被拒绝并说明原因', async () => {
+  it('乘积变量缺少边界时给出可操作提示', async () => {
     root = mount(container)
     await flush()
 
@@ -224,6 +224,21 @@ describe('App 渲染验收', () => {
     await setInput(ta, 'x : 非负\ny : 非负\n收益 = x * y\nmax 收益\n')
     await flush()
 
-    expect(container.textContent ?? '').toContain('非线性')
+    const text = container.textContent ?? ''
+    expect(text).toContain('参与乘积')
+    expect(text).toContain('上界')
+  })
+
+  it('连续相乘的近似解被明确标注损失率', async () => {
+    root = mount(container)
+    await flush()
+
+    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    await setInput(ta, 'x : 非负 <= 10\ny : 非负 <= 10\nx + y <= 10\n收益 = x * y\nmax 收益\n')
+    await flush()
+
+    const text = container.textContent ?? ''
+    expect(text).toContain('近似')
+    expect(text).toContain('损失率')
   })
 })

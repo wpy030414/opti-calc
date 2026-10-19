@@ -139,26 +139,57 @@ describe('LinExpr', () => {
   })
 })
 
-describe('线性化与非线性拒绝', () => {
-  it('变量相乘报非线性错误并带行号', () => {
-    expect(() => buildModel(parse('x * y = 2'))).toThrow(ModelError)
+describe('线性化：二次项折叠与剩余非线性拒绝', () => {
+  it('变量相乘折叠为二次项', () => {
+    const m = buildModel(parse('x * y = 2'))
+    const t = m.constraints[0]?.bilinear?.[0]
+    expect(t?.i).toBe('x')
+    expect(t?.j).toBe('y')
+    expect(t?.coef.eq(Frac.ONE)).toBe(true)
+  })
+
+  it('变量平方折叠为 x*x 的二次项', () => {
+    const m = buildModel(parse('x = 1\nx * x = 4'))
+    const t = m.constraints[1]?.bilinear?.[0]
+    expect(t?.i).toBe('x')
+    expect(t?.j).toBe('x')
+    expect(t?.coef.eq(Frac.ONE)).toBe(true)
+  })
+
+  it('x^2 与 x*x 等价', () => {
+    const m = buildModel(parse('x^2 = 4'))
+    expect(m.constraints[0]?.bilinear).toHaveLength(1)
+    expect(m.constraints[0]?.bilinear?.[0]?.i).toBe('x')
+  })
+
+  it('移项后二次项符号正确', () => {
+    const bs = buildModel(parse('x * y = z * w')).constraints[0]?.bilinear ?? []
+    expect(bs).toHaveLength(2)
+    expect(bs.find((t) => t.i === 'x' && t.j === 'y')?.coef.eq(Frac.ONE)).toBe(true)
+    // 二次项按 (i <= j) 规范化，故 z*w 存为 (w, z)
+    expect(bs.find((t) => t.i === 'w' && t.j === 'z')?.coef.eq(Frac.ONE.neg())).toBe(true)
+  })
+
+  it('三个变量相乘被拒绝并带行号', () => {
     try {
-      buildModel(parse('x = 1\nx * x = 4'))
+      buildModel(parse('x = 1\nx * y * z = 4'))
+      throw new Error('应当抛错')
     } catch (e) {
+      expect(e).toBeInstanceOf(ModelError)
       expect((e as ModelError).line).toBe(2)
-      expect((e as ModelError).message).toContain('非线性')
+      expect((e as ModelError).message).toContain('次数')
     }
   })
 
-  it('变量的平方报非线性', () => {
-    expect(() => buildModel(parse('x^2 = 4'))).toThrow(ModelError)
+  it('常量定义不能包含变量乘积', () => {
+    expect(() => buildModel(parse('a := x * y'))).toThrow(ModelError)
   })
 
-  it('变量做除数报非线性', () => {
+  it('变量做除数仍被拒绝', () => {
     expect(() => buildModel(parse('1 / x = 2'))).toThrow(ModelError)
   })
 
-  it('含未知量的 ceil 报非线性', () => {
+  it('含未知量的 ceil 仍被拒绝', () => {
     expect(() => buildModel(parse('ceil(x) <= 5'))).toThrow(ModelError)
   })
 

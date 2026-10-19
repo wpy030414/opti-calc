@@ -311,8 +311,8 @@ describe('解的唯一性与诊断', () => {
     expect((sol.status as { reason?: string }).reason).toContain('矛盾')
   })
 
-  it('非线性模型被拒绝并说明原因', () => {
-    // 收益 = 产量 × 单价，但单价随产量递减 → 变量相乘，超出线性范围
+  it('连续变量相乘缺少上界时给出可操作提示', () => {
+    // 收益 = 产量 × 单价，两个因子都连续且无上界：无法建立包络，必须让用户补边界
     expect(() =>
       solve(`
         产量 : 非负
@@ -320,6 +320,39 @@ describe('解的唯一性与诊断', () => {
         收益 = 产量 * 单价
         max 收益
       `),
-    ).toThrow(/非线性/)
+    ).toThrow(/有限上界|有限下界|上下界/)
+  })
+
+  it('整数 × 连续：精确线性化，结果无损失率', () => {
+    // 份数 × 单价是算账里最常见的二次项；整数因子可精确展开
+    const sol = solve(`
+      份数 : 非负整数 <= 5
+      单价 : 非负 <= 10
+      花费 = 份数 * 单价
+      max 花费
+    `)
+    expect(sol.status.kind).toBe('optimal')
+    expect(sol.objectiveValue?.eq(Frac.parse('50'))).toBe(true)
+    expect(sol.values.get('份数')?.eq(Frac.parse('5'))).toBe(true)
+    expect(sol.approximation).toBeUndefined()
+  })
+
+  it('连续 × 连续：返回近似解并明确报告损失率', () => {
+    // x*y 在 x,y∈[0,10]、x+y≤10 上最优 25（x=y=5）
+    const sol = solve(`
+      x : 非负 <= 10
+      y : 非负 <= 10
+      x + y <= 10
+      收益 = x * y
+      max 收益
+    `)
+    expect(sol.status.kind).toBe('optimal')
+    expect(sol.approximation).toBeDefined()
+    const gap = sol.approximation?.relativeGap ?? Frac.ZERO
+    expect(gap.gt(Frac.ZERO)).toBe(true)
+    // 近似值必须落在「真实最优 25 × (1 - gap)」之上
+    const lower = Frac.parse('25').mul(Frac.ONE.sub(gap))
+    expect(sol.objectiveValue?.ge(lower)).toBe(true)
+    expect(sol.warnings.some((w) => w.includes('近似'))).toBe(true)
   })
 })

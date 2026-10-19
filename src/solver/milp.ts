@@ -30,7 +30,7 @@ export interface MilpResult {
 }
 
 /** 一条分支产生的额外约束：Σ coef·x {<=,>=} rhs。 */
-interface BranchCut {
+export interface BranchCut {
   coef: Frac[]
   sense: 'le' | 'ge'
   rhs: Frac
@@ -121,7 +121,7 @@ export function solveMilp(std: Standardized, allowInteger: boolean): MilpResult 
 }
 
 /** 找第一个取非整数值的整数变量；全部为整数时返回 null。 */
-function pickFractionalInteger(
+export function pickFractionalInteger(
   x: Frac[],
   varNames: string[],
   subs: Standardized['subs'],
@@ -141,7 +141,7 @@ function pickFractionalInteger(
 }
 
 /** 为分支变量构造标准形系数行。 */
-function buildVarCut(
+export function buildVarCut(
   ncols: number,
   cols: number[],
   split: boolean,

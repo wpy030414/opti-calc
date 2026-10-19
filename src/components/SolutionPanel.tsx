@@ -1,5 +1,5 @@
 import { Frac } from '@/solver/frac'
-import { displayValue, exactText } from '@/lib/format'
+import { displayValue, exactText, percentText } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -35,17 +35,26 @@ export function SolutionPanel({ solution, objectiveLabel, className }: SolutionP
 
   return (
     <div className={className}>
-      <StatusBanner status={status} />
+      <StatusBanner status={status} approximate={solution.approximation !== undefined} />
 
       {solution.objectiveValue && status.kind === 'optimal' ? (
         <Card className="mb-3">
           <CardContent className="py-4">
             <div className="text-xs tracking-wide text-muted-foreground uppercase">
               {objectiveLabel}
+              {solution.approximation ? '（近似）' : ''}
             </div>
             <div className="mt-1 font-mono text-3xl font-semibold tabular-nums">
+              {solution.approximation ? '≈ ' : ''}
               {displayValue(solution.objectiveValue)}
             </div>
+            {solution.approximation ? (
+              <p className="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+                连续变量相乘属于非凸问题，这里给出的是近似最优解； 与真实最优值的相对损失率不超过{' '}
+                <span className="font-mono">{percentText(solution.approximation.relativeGap)}</span>
+                。
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -98,8 +107,24 @@ export function SolutionPanel({ solution, objectiveLabel, className }: SolutionP
   )
 }
 
-function StatusBanner({ status }: { status: Solution['status'] }) {
+function StatusBanner({
+  status,
+  approximate,
+}: {
+  status: Solution['status']
+  approximate: boolean
+}) {
   if (status.kind === 'optimal') {
+    if (approximate) {
+      return (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+          <Badge variant="warning">近似解</Badge>
+          <span className="text-sm text-amber-900 dark:text-amber-200">
+            非凸问题无法精确求解，以下为带损失率保证的近似最优解
+          </span>
+        </div>
+      )
+    }
     return (
       <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/50 dark:bg-emerald-950/30">
         <Badge variant="success">已求解</Badge>

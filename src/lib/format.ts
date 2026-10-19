@@ -32,6 +32,11 @@ export function approxValue(v: Frac, digits = 4): string {
   return v.toDecimalString(digits)
 }
 
+/** 百分比文本，如 0.0081 → 「0.81%」。用于损失率展示。 */
+export function percentText(v: Frac, digits = 2): string {
+  return `${v.mul(Frac.parse('100')).toDecimalString(digits)}%`
+}
+
 /** 是否为整数（用于决定要不要显示小数部分）。 */
 export function isIntegral(v: Frac): boolean {
   return v.d === 1n

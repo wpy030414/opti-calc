@@ -86,11 +86,22 @@ export function SyntaxHelp() {
 
           <div>
             <div className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              二次项（变量相乘）
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              支持 <code>x * y</code> 与 <code>x^2</code>。「整数 × 变量」会被精确线性化，
+              结果是精确值；「连续 × 连续」属于非凸问题，只能给出近似解，并会明确标注损失率上界。
+              参与相乘的变量必须有有限上下界，如 <code>x : 非负 &lt;= 100</code>。
+            </p>
+          </div>
+
+          <div>
+            <div className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
               不支持
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              变量相乘（<code>x * y</code>）、变量的平方、变量做除数、
-              <code>!=</code> 约束。这些都是非线性或非凸结构，需要换算法。
+              三个及以上变量相乘、变量做除数、变量的三次及以上幂、含未知量的取整函数、
+              <code>!=</code> 约束。这些结构超出当前算法能力。
             </p>
           </div>
         </CardContent>
