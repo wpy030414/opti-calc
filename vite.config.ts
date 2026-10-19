@@ -25,7 +25,8 @@ export default defineConfig({
     options: { typeAware: true, typeCheck: true },
   },
   test: {
+    // 默认 node 环境跑纯内核测试；组件测试用文件内 docblock 覆写为 jsdom
     environment: 'node',
-    include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
+    include: ['tests/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
   },
 })

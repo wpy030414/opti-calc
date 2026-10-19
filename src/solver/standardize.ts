@@ -73,8 +73,8 @@ function toRowForm(
 ): { coef: Frac[]; sense: RelSense; rhs: Frac; warning?: string } {
   if (c.op === '!=') {
     throw new ModelError(
-      `第 ${c.line} 行使用了「!=」约束。它定义的可行域不是凸集，线性规划无法直接处理；` +
-        `可拆成两个模型分别求解，或引入 0/1 变量做析取。`,
+      '使用了「!=」约束。它定义的可行域不是凸集，线性规划无法直接处理；' +
+        '可拆成两个模型分别求解，或引入 0/1 变量做析取。',
       c.line,
       1,
     )

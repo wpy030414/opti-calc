@@ -131,11 +131,7 @@ class LineParser {
     const t = this.eat(type, value)
     if (!t) {
       const p = this.peek().pos
-      throw new ParseError(
-        `第 ${this.line} 行期望 ${what}，实际得到「${this.peek().value || 'EOF'}」`,
-        p.line,
-        p.col,
-      )
+      throw new ParseError(`期望 ${what}，实际得到「${this.peek().value || 'EOF'}」`, p.line, p.col)
     }
     return t
   }
@@ -146,7 +142,7 @@ class LineParser {
 
   private fail(msg: string): never {
     const t = this.peek()
-    throw new ParseError(`${msg}（第 ${this.line} 行第 ${t.pos.col} 列）`, t.pos.line, t.pos.col)
+    throw new ParseError(msg, t.pos.line, t.pos.col)
   }
 
   parseStatement(): Stmt {
@@ -222,7 +218,7 @@ class LineParser {
     }
     if (free && spec.implicitLower) {
       throw new ModelError(
-        `变量「${name}」同时声明为 free 与「${kindTok.value}」（自带下界 ${spec.implicitLower.toString()}），二者矛盾（第 ${this.line} 行）`,
+        `变量「${name}」同时声明为 free 与「${kindTok.value}」（自带下界 ${spec.implicitLower.toString()}），二者矛盾`,
         this.line,
         kindTok.pos.col,
       )
@@ -286,25 +282,17 @@ class LineParser {
     const left = this.parseExpr()
     const cmpTok = this.peek()
     if (cmpTok.type !== 'cmp') {
-      throw new ParseError(
-        `第 ${this.line} 行缺少比较符（= < <= > >= !=）`,
-        cmpTok.pos.line,
-        cmpTok.pos.col,
-      )
+      throw new ParseError('缺少比较符（= < <= > >= !=）', cmpTok.pos.line, cmpTok.pos.col)
     }
     this.next()
     if (cmpTok.value === ':' || cmpTok.value === ':=') {
-      throw new ParseError(
-        `第 ${this.line} 行约束的比较符非法：「${cmpTok.value}」`,
-        cmpTok.pos.line,
-        cmpTok.pos.col,
-      )
+      throw new ParseError(`约束的比较符非法：「${cmpTok.value}」`, cmpTok.pos.line, cmpTok.pos.col)
     }
     // cmpTok.value 必为 RelOp 之一：lexer 只产出这 6 个值，`==` 已归一化为 `=`
     const op = CMP_TO_RELOP[cmpTok.value]
     if (op === undefined) {
       throw new ParseError(
-        `第 ${this.line} 行出现无法识别的比较符「${cmpTok.value}」`,
+        `出现无法识别的比较符「${cmpTok.value}」`,
         cmpTok.pos.line,
         cmpTok.pos.col,
       )
@@ -409,11 +397,7 @@ class LineParser {
         const name = t.value.toLowerCase()
         const arity = FN_ARITY[name]
         if (arity === undefined) {
-          throw new ModelError(
-            `未知函数「${t.value}」（第 ${this.line} 行第 ${t.pos.col} 列）`,
-            t.pos.line,
-            t.pos.col,
-          )
+          throw new ModelError(`未知函数「${t.value}」`, t.pos.line, t.pos.col)
         }
         this.next()
         const args: Expr[] = []
@@ -424,7 +408,7 @@ class LineParser {
         this.expect('rparen', ')', '右括号')
         if (args.length !== arity) {
           throw new ModelError(
-            `函数「${t.value}」需要 ${arity} 个参数，实际 ${args.length} 个（第 ${this.line} 行第 ${t.pos.col} 列）`,
+            `函数「${t.value}」需要 ${arity} 个参数，实际 ${args.length} 个`,
             t.pos.line,
             t.pos.col,
           )

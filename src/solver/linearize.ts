@@ -38,7 +38,7 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
       const m = linearize(e.left, constants).tryMul(linearize(e.right, constants))
       if (m === null) {
         throw new ModelError(
-          `非线性项：变量之间不能相乘（第 ${e.pos.line} 行）。本求解器只处理线性模型。`,
+          '非线性项：变量之间不能相乘。本求解器只处理线性模型。',
           e.pos.line,
           e.pos.col,
         )
@@ -48,11 +48,7 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
     case 'div': {
       const q = linearize(e.left, constants).tryDiv(linearize(e.right, constants))
       if (q === null) {
-        throw new ModelError(
-          `非线性项：除数必须是常量（第 ${e.pos.line} 行）。`,
-          e.pos.line,
-          e.pos.col,
-        )
+        throw new ModelError('非线性项：除数必须是常量。', e.pos.line, e.pos.col)
       }
       return q
     }
@@ -60,16 +56,12 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
       const base = linearize(e.base, constants)
       const exp = linearize(e.exp, constants)
       if (!exp.isConstant) {
-        throw new ModelError(
-          `非线性项：指数必须是常量（第 ${e.pos.line} 行）。`,
-          e.pos.line,
-          e.pos.col,
-        )
+        throw new ModelError('非线性项：指数必须是常量。', e.pos.line, e.pos.col)
       }
       const k = exp.constant
       if (!k.isInteger) {
         throw new ModelError(
-          `非线性项：指数必须是整数（第 ${e.pos.line} 行，实际为 ${k.toString()}）。`,
+          `非线性项：指数必须是整数（实际为 ${k.toString()}）。`,
           e.pos.line,
           e.pos.col,
         )
@@ -79,20 +71,12 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
       if (n === 1n) return base
       if (n < 0n) {
         if (!base.isConstant || base.constant.isZero) {
-          throw new ModelError(
-            `非线性项：负指数要求底数为非零常量（第 ${e.pos.line} 行）。`,
-            e.pos.line,
-            e.pos.col,
-          )
+          throw new ModelError('非线性项：负指数要求底数为非零常量。', e.pos.line, e.pos.col)
         }
         return LinExpr.const(base.constant.pow(n))
       }
       if (!base.isConstant) {
-        throw new ModelError(
-          `非线性项：变量的 ${n} 次幂不是线性表达式（第 ${e.pos.line} 行）。`,
-          e.pos.line,
-          e.pos.col,
-        )
+        throw new ModelError(`非线性项：变量的 ${n} 次幂不是线性表达式。`, e.pos.line, e.pos.col)
       }
       return LinExpr.const(base.constant.pow(n))
     }
@@ -101,7 +85,7 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
       for (const a of args) {
         if (!a.isConstant) {
           throw new ModelError(
-            `函数 ${e.name}() 的参数含未知量，属于非线性/非凸结构（第 ${e.pos.line} 行）。` +
+            `函数 ${e.name}() 的参数含未知量，属于非线性/非凸结构。` +
               `请把它移到约束里，或先给相关变量赋值。`,
             e.pos.line,
             e.pos.col,
@@ -144,7 +128,7 @@ function applyFn(name: string, args: Frac[], line: number, col: number): Frac {
 function evalConst(e: Expr, constants: ReadonlyMap<string, Frac>, line: number): Frac {
   const lin = linearize(e, constants)
   if (!lin.isConstant) {
-    throw new ModelError(`边界必须是常量表达式（第 ${line} 行）`, line, 1)
+    throw new ModelError('边界必须是常量表达式', line, 1)
   }
   return lin.constant
 }
@@ -166,14 +150,14 @@ export function buildModel(stmts: Stmt[]): Model {
   for (const s of stmts) {
     if (s.kind !== 'const') continue
     if (constants.has(s.name)) {
-      throw new ModelError(`常量「${s.name}」重复定义（第 ${s.line} 行）`, s.line, 1)
+      throw new ModelError(`常量「${s.name}」重复定义`, s.line, 1)
     }
     let val: Frac
     try {
       val = linearize(s.expr, constants).constantOnly(s.line)
     } catch (err) {
       if (err instanceof ModelError || err instanceof NumericError) throw err
-      throw new ModelError(`常量「${s.name}」的定义无效（第 ${s.line} 行）`, s.line, 1)
+      throw new ModelError(`常量「${s.name}」的定义无效`, s.line, 1)
     }
     constants.set(s.name, val)
   }
@@ -182,10 +166,10 @@ export function buildModel(stmts: Stmt[]): Model {
   for (const s of stmts) {
     if (s.kind !== 'var') continue
     if (seen.has(s.name)) {
-      throw new ModelError(`变量「${s.name}」重复声明（第 ${s.line} 行）`, s.line, 1)
+      throw new ModelError(`变量「${s.name}」重复声明`, s.line, 1)
     }
     if (constants.has(s.name)) {
-      throw new ModelError(`「${s.name}」既是常量又是变量（第 ${s.line} 行）`, s.line, 1)
+      throw new ModelError(`「${s.name}」既是常量又是变量`, s.line, 1)
     }
     seen.add(s.name)
 
@@ -222,7 +206,7 @@ export function buildModel(stmts: Stmt[]): Model {
 
     if (decl.lower && decl.upper && decl.upper.lt(decl.lower)) {
       throw new ModelError(
-        `变量「${s.name}」的取值范围为空：下界 ${decl.lower.toString()} > 上界 ${decl.upper.toString()}（第 ${s.line} 行）`,
+        `变量「${s.name}」的取值范围为空：下界 ${decl.lower.toString()} > 上界 ${decl.upper.toString()}`,
         s.line,
         1,
       )
@@ -242,7 +226,7 @@ export function buildModel(stmts: Stmt[]): Model {
       })
     } else if (s.kind === 'objective') {
       if (objective) {
-        throw new ModelError(`只能有一个目标函数（第 ${s.line} 行重复声明）`, s.line, 1)
+        throw new ModelError('只能有一个目标函数', s.line, 1)
       }
       objective = { sense: s.sense, expr: linearize(s.expr, constants), line: s.line }
     }

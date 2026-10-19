@@ -118,7 +118,7 @@ export class LinExpr {
   /** 断言为纯常量并返回其值；含未知量时抛 ModelError（带行号）。 */
   constantOnly(line: number): Frac {
     if (!this.isConstant) {
-      throw new ModelError(`常量定义不能包含未知量（第 ${line} 行）`, line, 1)
+      throw new ModelError('常量定义不能包含未知量', line, 1)
     }
     return this.constant
   }

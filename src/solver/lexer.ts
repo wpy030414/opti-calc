@@ -97,8 +97,7 @@ export function tokenize(input: string): Token[] {
     if (isDigit(ch) || (ch === '.' && isDigit(src[i + 1] ?? ''))) {
       NUMBER_RE.lastIndex = i
       const m = NUMBER_RE.exec(src)
-      if (!m || m[0] === '')
-        throw new ParseError(`非法数字起始于第 ${line} 行第 ${col} 列`, line, col)
+      if (!m || m[0] === '') throw new ParseError('非法数字', line, col)
       tokens.push({ type: 'num', value: m[0], pos })
       advance(m[0].length)
       continue
@@ -150,7 +149,7 @@ export function tokenize(input: string): Token[] {
       continue
     }
 
-    throw new ParseError(`无法识别的字符「${ch}」（第 ${line} 行第 ${col} 列）`, line, col)
+    throw new ParseError(`无法识别的字符「${ch}」`, line, col)
   }
 
   tokens.push({ type: 'eof', value: '', pos: here() })
