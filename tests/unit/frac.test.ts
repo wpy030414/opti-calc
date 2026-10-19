@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { Frac, ceilDiv, floorDiv, roundDiv } from '@/solver/frac'
 
 describe('Frac 精确有理数', () => {

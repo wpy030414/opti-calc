@@ -19,6 +19,12 @@ export interface VarDecl {
   line: number
 }
 
+/**
+ * 关系运算符。
+ *
+ * 没有 `==`——lexer 已把它归一化为 `=`，因此这里不需要两套等号，
+ * 各处 switch 也不必为同一个语义写两个分支。
+ */
 export type RelOp = '=' | '!=' | '<' | '<=' | '>' | '>='
 
 export interface Constraint {
@@ -73,6 +79,14 @@ export interface Solution {
   warnings: string[]
   /** 模型规模统计，用于展示。 */
   stats?: { vars: number; constraints: number; integerVars: number; lpNodes?: number }
+  /**
+   * 变量展示顺序：按其在模型中首次出现的次序。
+   *
+   * 比字母序更符合阅读直觉——用户写下条件的顺序就是他期望看到答案的顺序。
+   */
+  varOrder: string[]
+  /** 目标方向；无目标时为 undefined。用于决定结果标题写「最大值」还是「最小值」。 */
+  objectiveSense?: ObjectiveSense
 }
 
 export interface ConstraintReport {

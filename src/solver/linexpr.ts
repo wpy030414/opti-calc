@@ -105,7 +105,8 @@ export class LinExpr {
     return new LinExpr(m, this.constant.mul(k))
   }
 
-  /** 按给定赋值求值（缺失变量视为 0）。 */  eval(assign: ReadonlyMap<string, Frac>): Frac {
+  /** 按给定赋值求值（缺失变量视为 0）。 */
+  eval(assign: ReadonlyMap<string, Frac>): Frac {
     let acc = this.constant
     for (const [name, c] of this.terms) {
       const v = assign.get(name)

@@ -1,4 +1,4 @@
-import { Frac } from './frac'
+import { Frac, zeros } from './frac'
 import { SolverError } from './errors'
 
 /**
@@ -69,6 +69,19 @@ function rowAt(rows: Frac[][], i: number): Frac[] {
   return r
 }
 
+/**
+ * 读取某行的基变量列下标。
+ *
+ * 表长与行数始终同步（每行都 push 过一次），因此越界只可能是实现 bug。
+ * 单独立一个函数是为了让 `noUncheckedIndexedAccess` 下的调用点保持整洁，
+ * 而不是散落一堆非空断言。
+ */
+function basisAt(basis: number[], i: number): number {
+  const v = basis[i]
+  if (v === undefined) throw new SolverError(`内部错误：基变量表越界访问行 ${i}`)
+  return v
+}
+
 export function solveLp(p: LpStandard): LpResult {
   const m = p.A.length
   // 先把 b 规整为非负：整行取反并翻转不等号方向
@@ -104,7 +117,7 @@ export function solveLp(p: LpStandard): LpResult {
   let artIdx = artStart
 
   for (let i = 0; i < m; i++) {
-    const row = new Array<Frac>(ncols + 1).fill(Frac.ZERO)
+    const row = zeros(ncols + 1)
     const src = rowAt(A, i)
     for (let j = 0; j < p.n; j++) row[j] = at(src, j)
     const s = sense[i] as RelSense
@@ -126,16 +139,16 @@ export function solveLp(p: LpStandard): LpResult {
 
   // 没有人工变量的行必须有基变量；否则该行为 0 = b，已在规整阶段保证 b>=0
   for (let i = 0; i < m; i++) {
-    if (basis[i] < 0) {
+    if (basisAt(basis, i) < 0) {
       // 纯等式行不会走到这里；'ge' 行有人工变量；'le' 行有松弛变量
       throw new SolverError(`内部错误：第 ${i} 行无法确定初始基变量`)
     }
   }
 
-  const t: Tableau = { m, ncols, rows, basis, objRow: new Array<Frac>(ncols + 1).fill(Frac.ZERO) }
+  const t: Tableau = { m, ncols, rows, basis, objRow: zeros(ncols + 1) }
 
   // ---- 第一阶段：min Σ 人工变量 ----
-  const phase1Cost = new Array<Frac>(ncols).fill(Frac.ZERO)
+  const phase1Cost = zeros(ncols)
   for (let j = artStart; j < ncols; j++) phase1Cost[j] = Frac.ONE
   computeObjRow(t, phase1Cost)
 
@@ -147,12 +160,17 @@ export function solveLp(p: LpStandard): LpResult {
 
   const phase1Obj = t.objRow[ncols]?.neg() ?? Frac.ZERO
   if (phase1Obj.gt(Frac.ZERO)) {
-    return { status: 'infeasible', x: [], objective: Frac.ZERO, reason: '约束互相矛盾，不存在可行解' }
+    return {
+      status: 'infeasible',
+      x: [],
+      objective: Frac.ZERO,
+      reason: '约束互相矛盾，不存在可行解',
+    }
   }
 
   // 把仍在基中的人工变量（值必为 0）换出，避免污染第二阶段
   for (let i = 0; i < m; i++) {
-    if (basis[i] < artStart) continue
+    if (basisAt(basis, i) < artStart) continue
     let pivotCol = -1
     const row = rowAt(t.rows, i)
     for (let j = 0; j < artStart; j++) {
@@ -170,7 +188,7 @@ export function solveLp(p: LpStandard): LpResult {
   }
 
   // ---- 第二阶段：min 原目标，人工变量禁止进基 ----
-  const phase2Cost = new Array<Frac>(ncols).fill(Frac.ZERO)
+  const phase2Cost = zeros(ncols)
   for (let j = 0; j < p.n; j++) phase2Cost[j] = p.c[j] ?? Frac.ZERO
   computeObjRow(t, phase2Cost)
 
@@ -182,9 +200,9 @@ export function solveLp(p: LpStandard): LpResult {
     return { status: 'unbounded', x: [], objective: Frac.ZERO, reason: '目标函数无界' }
   }
 
-  const x = new Array<Frac>(p.n).fill(Frac.ZERO)
+  const x = zeros(p.n)
   for (let i = 0; i < m; i++) {
-    const bi = t.basis[i]
+    const bi = basisAt(t.basis, i)
     if (bi >= 0 && bi < p.n) x[bi] = at(rowAt(t.rows, i), t.ncols)
   }
   const objective = t.objRow[ncols]?.neg() ?? Frac.ZERO
@@ -201,7 +219,7 @@ function computeObjRow(t: Tableau, costs: Frac[]): void {
   const obj = t.objRow
   for (let j = 0; j <= t.ncols; j++) obj[j] = costs[j] ?? Frac.ZERO
   for (let i = 0; i < t.m; i++) {
-    const bi = t.basis[i]
+    const bi = basisAt(t.basis, i)
     if (bi < 0) continue
     const cb = costs[bi] ?? Frac.ZERO
     if (cb.isZero) continue
@@ -217,7 +235,12 @@ function computeObjRow(t: Tableau, costs: Frac[]): void {
  *
  * @param blockFrom 该列下标起禁止进基（第二阶段用来屏蔽人工变量）。
  */
-function simplex(t: Tableau, costs: Frac[], itLimit: number, blockFrom = Infinity): 'optimal' | 'unbounded' | 'degenerate' {
+function simplex(
+  t: Tableau,
+  costs: Frac[],
+  itLimit: number,
+  blockFrom = Infinity,
+): 'optimal' | 'unbounded' | 'degenerate' {
   let it = 0
   for (;;) {
     if (++it > itLimit) return 'degenerate'
@@ -235,20 +258,21 @@ function simplex(t: Tableau, costs: Frac[], itLimit: number, blockFrom = Infinit
     // 最小比值检验
     let leave = -1
     let bestTheta: Frac | null = null
+    let bestBasis = -1
     for (let i = 0; i < t.m; i++) {
       const row = rowAt(t.rows, i)
       const a = at(row, enter)
       if (!a.gt(Frac.ZERO)) continue
-      const rhs = at(row, t.ncols)
-      const theta = rhs.div(a)
+      const theta = at(row, t.ncols).div(a)
+      const bi = basisAt(t.basis, i)
       if (bestTheta === null || theta.lt(bestTheta)) {
         bestTheta = theta
+        bestBasis = bi
         leave = i
-      } else if (theta.eq(bestTheta)) {
-        // Bland 出基规则：基变量下标最小者，避免循环
-        if (t.basis[i] >= 0 && (t.basis[leave] as number) >= 0 && (t.basis[i] as number) < (t.basis[leave] as number)) {
-          leave = i
-        }
+      } else if (theta.eq(bestTheta) && bi >= 0 && (bestBasis < 0 || bi < bestBasis)) {
+        // Bland 出基规则：比值并列时取基变量下标最小者，保证不会循环
+        bestBasis = bi
+        leave = i
       }
     }
     if (leave < 0) return 'unbounded'

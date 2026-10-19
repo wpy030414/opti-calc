@@ -1,4 +1,4 @@
-import { Frac, floorDiv, ceilDiv } from './frac'
+import { Frac, ceilDiv, floorDiv, zeros } from './frac'
 import { solveLp, type LpStandard, type LpResult } from './lp'
 import type { Standardized } from './standardize'
 
@@ -109,7 +109,13 @@ export function solveMilp(std: Standardized, allowInteger: boolean): MilpResult 
   }
 
   if (best === null) {
-    return { status: 'infeasible', x: [], objective: Frac.ZERO, nodes, reason: '不存在满足整数约束的可行解' }
+    return {
+      status: 'infeasible',
+      x: [],
+      objective: Frac.ZERO,
+      nodes,
+      reason: '不存在满足整数约束的可行解',
+    }
   }
   return { status: 'optimal', x: best.x, objective: best.obj, nodes }
 }
@@ -128,7 +134,7 @@ function pickFractionalInteger(
     if (!sub) continue
     const v = sub.split
       ? (x[sub.cols[0] as number] ?? Frac.ZERO).sub(x[sub.cols[1] as number] ?? Frac.ZERO)
-      : ((x[sub.cols[0] as number] ?? Frac.ZERO).add(sub.shift))
+      : (x[sub.cols[0] as number] ?? Frac.ZERO).add(sub.shift)
     if (v.d !== 1n) return { idx, value: v }
   }
   return null
@@ -142,7 +148,7 @@ function buildVarCut(
   sense: 'le' | 'ge',
   rhs: Frac,
 ): BranchCut {
-  const coef = new Array<Frac>(ncols).fill(Frac.ZERO)
+  const coef = zeros(ncols)
   if (split) {
     coef[cols[0] as number] = Frac.ONE
     coef[cols[1] as number] = Frac.ONE.neg()

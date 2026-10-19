@@ -1,4 +1,4 @@
-import { Frac } from './frac'
+import { Frac, zeros } from './frac'
 import type { Constraint } from './model'
 
 /**
@@ -47,7 +47,7 @@ function buildRows(eqs: Constraint[], varNames: string[]): Row[] {
   const rows: Row[] = []
   for (const c of eqs) {
     const diff = c.left.sub(c.right)
-    const coef = new Array<Frac>(varNames.length).fill(Frac.ZERO)
+    const coef = zeros(varNames.length)
     for (const [name, k] of diff.terms) {
       const j = idx.get(name)
       if (j === undefined) throw new Error(`内部错误：变量 ${name} 未在变量表中`)
@@ -58,11 +58,16 @@ function buildRows(eqs: Constraint[], varNames: string[]): Row[] {
   return rows
 }
 
-/** Gauss-Jordan 消元至简化行阶梯形（RREF）。原地修改 rows。 */
-function rref(rows: Row[]): { pivotCols: number[]; rank: number } {
+/**
+ * Gauss-Jordan 消元至简化行阶梯形（RREF）。原地修改 rows。
+ *
+ * 返回主元列下标；矩阵的秩就是 `pivotCols.length`，不必单独返回，
+ * 免得留下两个必须保持同步的真值来源。
+ */
+function rref(rows: Row[]): number[] {
   const pivotCols: number[] = []
   const m = rows.length
-  if (m === 0) return { pivotCols, rank: 0 }
+  if (m === 0) return pivotCols
   const n = (rows[0] as Row).coef.length
   let r = 0
 
@@ -110,7 +115,7 @@ function rref(rows: Row[]): { pivotCols: number[]; rank: number } {
     r++
   }
 
-  return { pivotCols, rank: pivotCols.length }
+  return pivotCols
 }
 
 export function solveLinearSystem(eqs: Constraint[], varNames: string[]): LinearSystemResult {
@@ -137,7 +142,7 @@ export function solveLinearSystem(eqs: Constraint[], varNames: string[]): Linear
     }
   }
 
-  const { pivotCols, rank } = rref(rows)
+  const pivotCols = rref(rows)
 
   // 检查矛盾行：系数全 0 而 rhs != 0
   for (const row of rows) {

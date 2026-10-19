@@ -198,12 +198,23 @@ export class Frac {
   pow(k: bigint): Frac {
     if (k === 0n) return Frac.ONE
     if (k < 0n) return this.inv().pow(-k)
-    let base: Frac = this
-    let exp = k
+    return Frac.powPositive(this, k)
+  }
+
+  /**
+   * 二进制快速幂（正指数）。
+   *
+   * 提成静态方法而不是写成实例方法里的 `let base = this`：
+   * 后者会被 lint 判为 this 别名，而这里确实需要逐轮平方，
+   * 用参数传递比抑制警告更直接。
+   */
+  private static powPositive(base: Frac, k: bigint): Frac {
     let acc = Frac.ONE
+    let b = base
+    let exp = k
     while (exp > 0n) {
-      if (exp & 1n) acc = acc.mul(base)
-      base = base.mul(base)
+      if (exp & 1n) acc = acc.mul(b)
+      b = b.mul(b)
       exp >>= 1n
     }
     return acc
@@ -297,7 +308,9 @@ export class Frac {
           ? floorDiv(scaled, this.d)
           : roundDiv(scaled, this.d)
     const sign = q < 0n ? '-' : ''
-    const abs = bigAbs(q).toString().padStart(digits + 1, '0')
+    const abs = bigAbs(q)
+      .toString()
+      .padStart(digits + 1, '0')
     const cut = abs.length - digits
     const intPart = abs.slice(0, cut)
     const fracPart = digits === 0 ? '' : abs.slice(cut).replace(/0+$/, '')
@@ -316,4 +329,15 @@ export class Frac {
 /** 便捷构造。 */
 export function frac(v: number | bigint | string | Frac): Frac {
   return Frac.of(v)
+}
+
+/**
+ * 构造长度为 `n`、全部为 `Frac.ZERO` 的数组。
+ *
+ * 用 `Array.from` 而非 `new Array(n).fill(...)`：后者创建的是稀疏数组，
+ * `fill` 之后虽然可用，但写法上「参数到底是长度还是唯一元素」有歧义，
+ * 而且求解器里这类零向量出现十余次，集中成一个具名函数更清楚。
+ */
+export function zeros(n: number): Frac[] {
+  return Array.from({ length: n }, () => Frac.ZERO)
 }

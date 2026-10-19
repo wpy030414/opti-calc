@@ -34,10 +34,16 @@ function isIdentPart(ch: string): boolean {
   return isIdentStart(ch) || isDigit(ch)
 }
 
-/** 统一比较符字面量。返回 [规范值, 消耗字符数]，无匹配返回 null。 */
+/**
+ * 统一比较符字面量。返回 [规范值, 消耗字符数]，无匹配返回 null。
+ *
+ * `==` 在这里归一化为 `=`：语法层只保留一套比较符，`RelOp` 类型才不会
+ * 被 `as` 断言塞进类型里根本不存在的值。
+ */
 function matchCmp(src: string, i: number): [string, number] | null {
   const two = src.slice(i, i + 2)
-  if (two === '<=' || two === '>=' || two === '==' || two === '!=' || two === ':=') return [two, 2]
+  if (two === '<=' || two === '>=' || two === '!=' || two === ':=') return [two, 2]
+  if (two === '==') return ['=', 2]
   const one = src[i]
   if (one === '<') return ['<', 1]
   if (one === '>') return ['>', 1]
@@ -91,7 +97,8 @@ export function tokenize(input: string): Token[] {
     if (isDigit(ch) || (ch === '.' && isDigit(src[i + 1] ?? ''))) {
       NUMBER_RE.lastIndex = i
       const m = NUMBER_RE.exec(src)
-      if (!m || m[0] === '') throw new ParseError(`非法数字起始于第 ${line} 行第 ${col} 列`, line, col)
+      if (!m || m[0] === '')
+        throw new ParseError(`非法数字起始于第 ${line} 行第 ${col} 列`, line, col)
       tokens.push({ type: 'num', value: m[0], pos })
       advance(m[0].length)
       continue
@@ -143,11 +150,7 @@ export function tokenize(input: string): Token[] {
       continue
     }
 
-    throw new ParseError(
-      `无法识别的字符「${ch}」（第 ${line} 行第 ${col} 列）`,
-      line,
-      col,
-    )
+    throw new ParseError(`无法识别的字符「${ch}」（第 ${line} 行第 ${col} 列）`, line, col)
   }
 
   tokens.push({ type: 'eof', value: '', pos: here() })

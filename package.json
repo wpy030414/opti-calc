@@ -2,8 +2,8 @@
   "name": "opti-calc",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "description": "通用多元方程组与最优化求解编辑器，面向一般人群的日常算账场景",
+  "type": "module",
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",

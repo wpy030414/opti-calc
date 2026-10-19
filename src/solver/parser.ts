@@ -1,6 +1,7 @@
 import { ParseError, ModelError } from './errors'
 import { Frac, normalizeWidth } from './frac'
 import type { Expr, Pos, Token } from './ast'
+import { POS_ZERO } from './ast'
 import { tokenize, tokenToNum } from './lexer'
 import type { RelOp, VarKind } from './model'
 
@@ -70,6 +71,22 @@ const VAR_KINDS: Record<string, { kind: VarKind; implicitLower?: Frac }> = {
 
 const MAX_WORDS = new Set(['max', 'maximize', '最大化', '最大'])
 const MIN_WORDS = new Set(['min', 'minimize', '最小化', '最小'])
+
+/**
+ * Token 字面量 → RelOp。
+ *
+ * 用查表而非 `as RelOp` 断言：断言会让任何新增 Token 值静默通过类型检查，
+ * 查表则把「lexer 产出了 parser 不认识的比较符」变成显式错误。
+ */
+const CMP_TO_RELOP: Record<string, RelOp | undefined> = {
+  '=': '=',
+  '!=': '!=',
+  '<': '<',
+  '<=': '<=',
+  '>': '>',
+  '>=': '>=',
+}
+
 const FN_ARITY: Record<string, number> = {
   ceil: 1,
   ceiling: 1,
@@ -80,7 +97,7 @@ const FN_ARITY: Record<string, number> = {
   min: 2,
 }
 
-const EOF_TOKEN: Token = { type: 'eof', value: '', pos: { offset: 0, line: 1, col: 1 } }
+const EOF_TOKEN: Token = { type: 'eof', value: '', pos: POS_ZERO }
 
 /** 把某一行的 Token 序列喂给下降解析器；行号统一为真实行号。 */
 class LineParser {
@@ -283,8 +300,17 @@ class LineParser {
         cmpTok.pos.col,
       )
     }
+    // cmpTok.value 必为 RelOp 之一：lexer 只产出这 6 个值，`==` 已归一化为 `=`
+    const op = CMP_TO_RELOP[cmpTok.value]
+    if (op === undefined) {
+      throw new ParseError(
+        `第 ${this.line} 行出现无法识别的比较符「${cmpTok.value}」`,
+        cmpTok.pos.line,
+        cmpTok.pos.col,
+      )
+    }
     const right = this.parseExpr()
-    return { kind: 'constraint', name: label, left, op: cmpTok.value as RelOp, right, line: this.line }
+    return { kind: 'constraint', name: label, left, op, right, line: this.line }
   }
 
   private expectEof(): void {
@@ -413,13 +439,34 @@ class LineParser {
 
 /** 去掉 `#` 或 `//` 之后的内容（本语法没有字符串字面量，无需考虑引号）。 */
 function stripLineComment(line: string): string {
+  const cut = commentStart(line)
+  return cut < 0 ? line : line.slice(0, cut)
+}
+
+/**
+ * 返回行内注释的起始下标；无注释返回 -1。
+ *
+ * 导出给编辑器做语法着色用，与解析器共用同一份注释规则，
+ * 避免「高亮认为这是代码、解析器认为这是注释」这类不一致。
+ */
+export function commentStart(line: string): number {
   const hash = line.indexOf('#')
   const slash = line.indexOf('//')
-  let cut = line.length
-  if (hash >= 0) cut = Math.min(cut, hash)
-  if (slash >= 0) cut = Math.min(cut, slash)
-  return line.slice(0, cut)
+  const candidates = [hash, slash].filter((i) => i >= 0)
+  return candidates.length > 0 ? Math.min(...candidates) : -1
 }
+
+/** 语法关键字全集，供编辑器高亮与帮助面板使用（单一数据源）。 */
+export const KEYWORDS: ReadonlySet<string> = new Set<string>([
+  ...Object.keys(VAR_KINDS),
+  ...MAX_WORDS,
+  ...MIN_WORDS,
+  'free',
+  '自由',
+])
+
+/** 内建函数名，供编辑器补全提示使用。 */
+export const FUNCTION_NAMES: readonly string[] = Object.keys(FN_ARITY)
 
 /**
  * 把整份模型文本解析为语句 AST 列表。

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { tokenize } from '@/solver/lexer'
 import { parse, parseExprLine } from '@/solver/parser'
 import { ParseError, ModelError } from '@/solver/errors'

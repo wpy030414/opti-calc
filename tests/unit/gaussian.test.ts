@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { Frac } from '@/solver/frac'
 import { LinExpr } from '@/solver/linexpr'
 import { buildModel, collectVariables } from '@/solver/linearize'
@@ -9,7 +9,7 @@ import { ModelError } from '@/solver/errors'
 function systemOf(src: string) {
   const model = buildModel(parse(src))
   const varNames = collectVariables(model)
-  const eqs = model.constraints.filter((c) => c.op === '=' || c.op === '==')
+  const eqs = model.constraints.filter((c) => c.op === '=')
   return { res: solveLinearSystem(eqs, varNames), varNames }
 }
 
@@ -42,7 +42,12 @@ describe('高斯消元（精确 RREF）', () => {
     expect(res.basis).toHaveLength(1)
     // 基向量：自由变量 +1 时另一个 -1
     const [bv] = res.basis
-    expect(bv?.vec.get('x')?.neg().eq(bv.vec.get('y') ?? Frac.ONE)).toBe(true)
+    expect(
+      bv?.vec
+        .get('x')
+        ?.neg()
+        .eq(bv.vec.get('y') ?? Frac.ONE),
+    ).toBe(true)
   })
 
   it('矛盾方程组', () => {
@@ -91,7 +96,9 @@ describe('高斯消元（精确 RREF）', () => {
 
 describe('LinExpr', () => {
   it('合并同类项', () => {
-    const e = LinExpr.var('x').scale(Frac.parse('2')).add(LinExpr.var('x').scale(Frac.parse('3')))
+    const e = LinExpr.var('x')
+      .scale(Frac.parse('2'))
+      .add(LinExpr.var('x').scale(Frac.parse('3')))
     expect(e.coef('x').eq(Frac.parse('5'))).toBe(true)
   })
 
@@ -116,7 +123,10 @@ describe('LinExpr', () => {
   })
 
   it('求值', () => {
-    const e = LinExpr.var('x').scale(Frac.parse('2')).add(LinExpr.var('y')).add(LinExpr.const(Frac.parse('1')))
+    const e = LinExpr.var('x')
+      .scale(Frac.parse('2'))
+      .add(LinExpr.var('y'))
+      .add(LinExpr.const(Frac.parse('1')))
     const assign = new Map([
       ['x', Frac.parse('3')],
       ['y', Frac.parse('4')],

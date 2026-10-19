@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite-plus'
+import { defineConfig, lazyPlugins } from 'vite-plus'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
 
@@ -9,7 +9,10 @@ const base = process.env.PAGES_BASE_PATH || '/'
 
 export default defineConfig({
   base,
-  plugins: [react()],
+  // lazyPlugins 让 vp 在只读配置元数据的场景（如 vp fmt / vp lint）跳过插件工厂，
+  // 避免为了跑个格式化就把整条 React 插件链加载一遍。
+  // 注意参数是回调：lazyPlugins(() => react())，直接传 react 只是碰巧签名兼容。
+  plugins: lazyPlugins(() => react()),
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, 'src') },
   },

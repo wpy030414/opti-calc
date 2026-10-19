@@ -1,7 +1,7 @@
-import { Frac, ceilDiv, floorDiv } from './frac'
+import { Frac, ceilDiv, floorDiv, zeros } from './frac'
 import { ModelError } from './errors'
 import type { LpStandard, RelSense } from './lp'
-import type { Constraint, Model } from './model'
+import type { Constraint, Model, RelOp } from './model'
 
 /**
  * 标准化：把带边界、自由变量、各类比较符的模型转成 LP 标准形。
@@ -55,13 +55,14 @@ export interface Standardized {
   objectiveConst: Frac
 }
 
-const OP_SENSE: Record<string, RelSense> = {
+const OP_SENSE: Record<RelOp, RelSense> = {
   '<=': 'le',
   '>=': 'ge',
   '=': 'eq',
-  '==': 'eq',
   '<': 'le',
   '>': 'ge',
+  // != 在 toRowForm 里被拒绝（非凸），这里给出映射只为让 Record 覆盖完整类型
+  '!=': 'eq',
 }
 
 /** 把一条约束整理为 `A x rel b`：所有项移到左边，右边只剩常数。 */
@@ -80,7 +81,7 @@ function toRowForm(
   }
 
   const diff = c.left.sub(c.right)
-  const coef = new Array<Frac>(ncols).fill(Frac.ZERO)
+  const coef = zeros(ncols)
   for (const [name, k] of diff.terms) {
     const sub = subs.get(name)
     if (!sub) throw new ModelError(`内部错误：变量「${name}」缺少标准化映射`)
@@ -162,7 +163,7 @@ export function standardize(model: Model, varNames: string[]): Standardized {
     const decl = model.vars.find((v) => v.name === name)
     const sub = subs.get(name)
     if (!decl || !sub || decl.upper === undefined) continue
-    const coef = new Array<Frac>(ncols).fill(Frac.ZERO)
+    const coef = zeros(ncols)
     if (sub.split) {
       coef[sub.cols[0] as number] = Frac.ONE
       coef[sub.cols[1] as number] = Frac.ONE.neg()
@@ -175,7 +176,7 @@ export function standardize(model: Model, varNames: string[]): Standardized {
   }
 
   const minimize = model.objective ? model.objective.sense === 'min' : true
-  const c = new Array<Frac>(ncols).fill(Frac.ZERO)
+  const c = zeros(ncols)
   let objectiveConst = Frac.ZERO
   if (model.objective) {
     const sign = minimize ? Frac.ONE : Frac.ONE.neg()

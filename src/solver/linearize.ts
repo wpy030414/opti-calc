@@ -48,7 +48,11 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
     case 'div': {
       const q = linearize(e.left, constants).tryDiv(linearize(e.right, constants))
       if (q === null) {
-        throw new ModelError(`非线性项：除数必须是常量（第 ${e.pos.line} 行）。`, e.pos.line, e.pos.col)
+        throw new ModelError(
+          `非线性项：除数必须是常量（第 ${e.pos.line} 行）。`,
+          e.pos.line,
+          e.pos.col,
+        )
       }
       return q
     }
@@ -56,7 +60,11 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
       const base = linearize(e.base, constants)
       const exp = linearize(e.exp, constants)
       if (!exp.isConstant) {
-        throw new ModelError(`非线性项：指数必须是常量（第 ${e.pos.line} 行）。`, e.pos.line, e.pos.col)
+        throw new ModelError(
+          `非线性项：指数必须是常量（第 ${e.pos.line} 行）。`,
+          e.pos.line,
+          e.pos.col,
+        )
       }
       const k = exp.constant
       if (!k.isInteger) {
@@ -100,7 +108,14 @@ function linearize(e: Expr, constants: ReadonlyMap<string, Frac>): LinExpr {
           )
         }
       }
-      return LinExpr.const(applyFn(e.name, args.map((a) => a.constant), e.pos.line, e.pos.col))
+      return LinExpr.const(
+        applyFn(
+          e.name,
+          args.map((a) => a.constant),
+          e.pos.line,
+          e.pos.col,
+        ),
+      )
     }
   }
 }
@@ -178,7 +193,12 @@ export function buildModel(stmts: Stmt[]): Model {
 
     // 下界：显式 > 类型别名隐含（非负/正整数）> free（无下界）> 默认无下界
     if (s.lower) {
-      decl.lower = tightenStrict(evalConst(s.lower, constants, s.line), s.lowerStrict === true, s.varKind, 'lower')
+      decl.lower = tightenStrict(
+        evalConst(s.lower, constants, s.line),
+        s.lowerStrict === true,
+        s.varKind,
+        'lower',
+      )
     } else if (s.implicitLower) {
       decl.lower = s.implicitLower
     } else if (s.free) {
@@ -186,7 +206,12 @@ export function buildModel(stmts: Stmt[]): Model {
     }
 
     if (s.upper) {
-      decl.upper = tightenStrict(evalConst(s.upper, constants, s.line), s.upperStrict === true, s.varKind, 'upper')
+      decl.upper = tightenStrict(
+        evalConst(s.upper, constants, s.line),
+        s.upperStrict === true,
+        s.varKind,
+        'upper',
+      )
     }
 
     // binary 自动收紧到 [0,1]

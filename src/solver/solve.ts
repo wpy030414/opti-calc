@@ -46,6 +46,15 @@ export interface SolveOptions {
 /** 超过该变量数就不再逐变量探测唯一性，改用秩估计。 */
 const UNIQUENESS_PROBE_LIMIT = 40
 
+/**
+ * 求解结果中由编排层统一补齐的展示字段。
+ *
+ * 内部各分支只需产出「算出来的东西」，`varOrder` 与 `objectiveSense`
+ * 这类纯粹为界面服务的字段在 `solve()` 出口处一次性附加。
+ * 否则每个 return 点都要记得带上，漏一个就少一块 UI 信息。
+ */
+type RawSolution = Omit<Solution, 'varOrder' | 'objectiveSense'>
+
 /** 求解入口。抛出 `SolverError` 子类表示模型有误（携带行号）。 */
 export function solve(source: string, options: SolveOptions = {}): Solution {
   const allowInteger = options.integer !== false
@@ -63,26 +72,35 @@ export function solve(source: string, options: SolveOptions = {}): Solution {
     }
   }
 
-  const equalities = model.constraints.filter((c) => c.op === '=' || c.op === '==')
+  const equalities = model.constraints.filter((c) => c.op === '=')
 
   // 诊断：等式系统是否自相矛盾。矛盾时无需再跑 LP。
   const sys: LinearSystemResult = solveLinearSystem(equalities, varNames)
-  if (sys.kind === 'infeasible') {
-    return {
-      status: { kind: 'infeasible', reason: sys.reason },
-      values: new Map(),
-      warnings,
-      stats: makeStats(model, varNames),
-    }
-  }
 
-  if (model.objective) {
-    return solveWithObjective(model, varNames, allowInteger, warnings, sys)
+  const raw: RawSolution =
+    sys.kind === 'infeasible'
+      ? {
+          status: { kind: 'infeasible', reason: sys.reason },
+          values: new Map(),
+          warnings,
+          stats: makeStats(model, varNames),
+        }
+      : model.objective
+        ? solveWithObjective(model, varNames, allowInteger, warnings, sys)
+        : solveFeasiblePoint(model, varNames, allowInteger, warnings, sys)
+
+  return {
+    ...raw,
+    varOrder: varNames,
+    objectiveSense: model.objective?.sense,
   }
-  return solveFeasiblePoint(model, varNames, allowInteger, warnings, sys)
 }
 
-function makeStats(model: Model, varNames: string[], lpNodes?: number): NonNullable<Solution['stats']> {
+function makeStats(
+  model: Model,
+  varNames: string[],
+  lpNodes?: number,
+): NonNullable<Solution['stats']> {
   return {
     vars: varNames.length,
     constraints: model.constraints.length,
@@ -98,7 +116,7 @@ function solveFeasiblePoint(
   allowInteger: boolean,
   warnings: string[],
   sys: LinearSystemResult,
-): Solution {
+): RawSolution {
   const stats = makeStats(model, varNames)
   const probe = zeroObjectiveModel(model)
   const std = standardize(probe, varNames)
@@ -157,7 +175,7 @@ function solveWithObjective(
   allowInteger: boolean,
   warnings: string[],
   sys: LinearSystemResult,
-): Solution {
+): RawSolution {
   const std = standardize(model, varNames)
   warnings.push(...std.warnings)
 
@@ -204,7 +222,10 @@ function statusOf(status: 'infeasible' | 'unbounded' | 'degenerate', reason?: st
  * 最常见的两种情况是「唯一解不是整数」和「唯一解超出声明范围」，
  * 单说「无可行解」对用户没有指导意义。
  */
-function enrichInfeasibleReason(reason: string | undefined, sys: LinearSystemResult): string | undefined {
+function enrichInfeasibleReason(
+  reason: string | undefined,
+  sys: LinearSystemResult,
+): string | undefined {
   if (sys.kind !== 'unique') return reason
   const point = describeAssignment(sys.particular, sys.varNames)
   return `${reason ?? '无可行解'}。等式部分本身有唯一解 ${point}，但它违反了不等式、边界或整数约束。`
@@ -245,9 +266,7 @@ function probeUniqueness(
     if (lo === null || hi === null) {
       return {
         unique: false,
-        warnings: [
-          `变量「${name}」在可行域内无界，因此存在无穷多组解；下面给出的是其中一个。`,
-        ],
+        warnings: [`变量「${name}」在可行域内无界，因此存在无穷多组解；下面给出的是其中一个。`],
       }
     }
     if (hi.gt(lo)) return { unique: false, warnings: [] }

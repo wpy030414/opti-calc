@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { Frac } from '@/solver/frac'
 import { solve, fmt } from '@/solver/solve'
 
