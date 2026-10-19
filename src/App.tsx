@@ -34,7 +34,7 @@ import type { Solution } from '@/solver/model'
 
 const STORAGE_KEY = 'opti-calc:source'
 const MODE_KEY = 'opti-calc:mode'
-const GITHUB_URL = 'https://github.com/xrl/opti-calc'
+const GITHUB_URL = 'https://github.com/wpy030414/opti-calc'
 
 type EditorMode = 'simple' | 'expert'
 type RightView = 'solve' | 'compare'
@@ -66,11 +66,12 @@ const OBJECTIVE_LABEL: Record<string, string> = {
 function readMode(): EditorMode {
   try {
     const raw = window.localStorage.getItem(MODE_KEY)
+    if (raw === '"expert"') return 'expert'
     if (raw === '"simple"') return 'simple'
   } catch {
     // ignore
   }
-  return 'expert'
+  return 'simple'
 }
 
 export function App() {
@@ -121,9 +122,8 @@ export function App() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
           <h1 className="mr-auto text-sm font-semibold">OptiCalc</h1>
-          <ModelLibraryButton source={source} paramNames={paramNames} onLoad={handleLoadModel} />
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -144,7 +144,14 @@ export function App() {
               <h2 className="text-sm font-medium">模型</h2>
               <ModeToggle mode={mode} onModeChange={handleModeChange} />
             </div>
-            <ExamplesButton onLoadExample={handleLoadExample} />
+            <div className="flex items-center gap-2">
+              <ModelLibraryButton
+                source={source}
+                paramNames={paramNames}
+                onLoad={handleLoadModel}
+              />
+              <ExamplesButton onLoadExample={handleLoadExample} />
+            </div>
           </div>
 
           {mode === 'simple' ? (

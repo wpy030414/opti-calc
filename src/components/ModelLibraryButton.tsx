@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Bookmark, Save, Trash2 } from 'lucide-react'
+import { Save, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -82,8 +82,7 @@ export function ModelLibraryButton({ source, paramNames, onLoad }: ModelLibraryB
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm">
-          <Bookmark className="mr-1 size-3.5" />
-          模型库
+          我的
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">

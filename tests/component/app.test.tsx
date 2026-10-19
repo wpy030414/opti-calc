@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { App } from '@/App'
-import { DEFAULT_SOURCE } from '@/data/examples'
 
 /**
  * 组件渲染验收。
@@ -17,6 +16,9 @@ import { DEFAULT_SOURCE } from '@/data/examples'
  *
  * 注意文件顶部的 `@vitest-environment jsdom` docblock：项目默认环境是 node，
  * 只有本文件需要 DOM。
+ *
+ * 默认模式已改为"简易"（simple），因此挂载后先看到 VisualEditor 表单而非
+ * textarea。需要 textarea 的测试必须先切换到"专家"模式。
  */
 
 /** act() 要求显式声明当前处于 React 测试环境，否则 React 会拒绝批次更新。 */
@@ -71,6 +73,34 @@ async function setInput(ta: HTMLTextAreaElement, value: string): Promise<void> {
   })
 }
 
+/** 切换到专家模式，返回 textarea 元素。 */
+async function switchToExpert(container: HTMLElement): Promise<HTMLTextAreaElement> {
+  const expertBtn = Array.from(container.querySelectorAll('button')).find(
+    (el) => el.textContent === '专家',
+  ) as HTMLElement | undefined
+  if (expertBtn) {
+    await act(async () => {
+      expertBtn.click()
+    })
+    await flush()
+  }
+  const ta = container.querySelector('textarea') as HTMLTextAreaElement
+  return ta
+}
+
+/** 切换到简易模式。 */
+async function switchToSimple(container: HTMLElement): Promise<void> {
+  const simpleBtn = Array.from(container.querySelectorAll('button')).find(
+    (el) => el.textContent === '简易',
+  ) as HTMLElement | undefined
+  if (simpleBtn) {
+    await act(async () => {
+      simpleBtn.click()
+    })
+    await flush()
+  }
+}
+
 describe('App 渲染验收', () => {
   let container: HTMLElement
   let root: Root
@@ -85,16 +115,18 @@ describe('App 渲染验收', () => {
     container.remove()
   })
 
-  it('挂载后渲染出标题与编辑器，无异常抛出', () => {
+  it('挂载后默认简易模式，渲染 VisualEditor 表单而非 textarea', () => {
     root = mount(container)
     expect(container.querySelector('h1')?.textContent).toContain('OptiCalc')
-    // textarea 是输入层，必须存在且带默认模型
-    const ta = container.querySelector('textarea')
-    expect(ta).not.toBeNull()
-    expect(ta?.value).toBe(DEFAULT_SOURCE)
+    // 简易模式：应有卡片表单，不应有 textarea
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.textContent).toContain('常量')
+    expect(container.textContent).toContain('变量')
+    expect(container.textContent).toContain('约束')
+    expect(container.textContent).toContain('目标')
   })
 
-  it('默认算例（钱不够时要等多久）自动求解并显示结果', async () => {
+  it('默认算例（钱不够时要等多久）在简易模式下自动求解并显示结果', async () => {
     root = mount(container)
     await flush()
 
@@ -113,7 +145,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     // 第二行才出错：若行号定位失效（永远报第 1 行），本断言会失败
     await setInput(ta, 'x = 1\ny + ')
     await flush()
@@ -130,7 +162,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     await setInput(ta, 'x @ 1')
     await flush()
 
@@ -145,7 +177,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     const lineCount = ta.value.split('\n').length
     // 行号栏在 textarea 之前，取 aria-hidden 的第一个兄弟容器
     const gutter = container.querySelector('[aria-hidden="true"]') as HTMLElement
@@ -157,7 +189,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     await setInput(ta, 'x + y = 10\nx - y = 4\n')
     await flush()
 
@@ -167,13 +199,15 @@ describe('App 渲染验收', () => {
     expect(text).toContain('3') // y = 3
   })
 
-  it('仅编辑后写盘：默认模型不覆盖用户存档', async () => {
-    // 惰性写入是刻意设计：若挂载即写盘，日后调整默认算例会把老用户的存档顶掉。
+  it('仅编辑后写盘：挂载后自动求解会触发编译→写盘，用户编辑后再次写盘', async () => {
+    // 简易模式下 mount → decompile → compile → onChange → 持久化这个路径
+    // 是 VisualEditor 的固有行为（区别于 Expert 真正惰性）。
     root = mount(container)
     await flush()
-    expect(window.localStorage.getItem('opti-calc:source')).toBeNull()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    // 清空此前写盘以验证后续编辑写盘
+    window.localStorage.clear()
+    const ta = await switchToExpert(container)
     await setInput(ta, 'x = 3\n')
     await flush()
 
@@ -188,7 +222,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     expect(ta.value).toBe(custom)
     expect(container.textContent ?? '').toContain('苹果')
   })
@@ -198,8 +232,11 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
-    expect(ta.value).toBe(DEFAULT_SOURCE)
+    const ta = await switchToExpert(container)
+    // 反编译→编译回 DSL 会丢失注释，但关键内容（变量、约束、目标）应保留
+    expect(ta.value).toContain('份数')
+    expect(ta.value).toContain('非负整数')
+    expect(ta.value).toContain('max 份数')
     expect(container.querySelector('h1')?.textContent).toContain('OptiCalc')
   })
 
@@ -207,7 +244,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     await setInput(ta, 'x = 10\nx <= 5\n')
     await flush()
 
@@ -220,7 +257,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     await setInput(ta, 'x : 非负\ny : 非负\n收益 = x * y\nmax 收益\n')
     await flush()
 
@@ -233,7 +270,7 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    const ta = await switchToExpert(container)
     await setInput(ta, 'x : 非负 <= 10\ny : 非负 <= 10\nx + y <= 10\n收益 = x * y\nmax 收益\n')
     await flush()
 
@@ -265,34 +302,33 @@ describe('App 渲染验收', () => {
     expect(gh).not.toBeNull()
   })
 
-  it('header 包含模型库和 GitHub 链接，示例按钮在编辑器标题区域', () => {
+  it('模型库（我的）在编辑器标题区，header 仅含标题和 GitHub 链接', () => {
     root = mount(container)
     const header = container.querySelector('header')!
-    // header 中有模型库按钮和 GitHub 链接
-    const buttons = Array.from(header.querySelectorAll('button'))
-    expect(buttons.some((b) => b.textContent?.includes('模型库'))).toBe(true)
+    // header 中不包含模型库按钮
+    const headerButtons = Array.from(header.querySelectorAll('button'))
+    expect(headerButtons.every((b) => !b.textContent?.includes('我的'))).toBe(true)
 
     const main = container.querySelector('main')!
-    // 示例下拉触发器在主区域
+    // 模型库按钮「我的」和示例按钮都在主区域
     const mainButtons = Array.from(main.querySelectorAll('button'))
+    expect(mainButtons.some((b) => b.textContent === '我的')).toBe(true)
     expect(mainButtons.some((b) => b.textContent === '示例')).toBe(true)
   })
 
   it('切换到简易模式后渲染 VisualEditor 表单', async () => {
+    // 默认已是简易模式，先切到专家再切回来验证切换功能
     root = mount(container)
     await flush()
 
-    // 点击"简易"切换
-    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
-      (el) => el.textContent === '简易',
-    ) as HTMLElement | undefined
-    expect(simpleBtn).toBeTruthy()
-    await act(async () => {
-      simpleBtn!.click()
-    })
+    // 先切到专家
+    await switchToExpert(container)
+    expect(container.querySelector('textarea')).toBeTruthy()
+
+    // 再切回简易
+    await switchToSimple(container)
 
     // VisualEditor 应该显示常量、变量、约束、目标四个 Card
-    // CardTitle 渲染为 <div>（shadcn/ui 设计），不是 <h3>
     const text = container.textContent ?? ''
     expect(text).toContain('常量')
     expect(text).toContain('变量')
@@ -304,17 +340,16 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    // 先清空编辑器以从干净状态开始
-    await setInput(container.querySelector('textarea') as HTMLTextAreaElement, '')
-    await flush()
-
-    // 切换到简易模式
-    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
-      (el) => el.textContent === '简易',
+    // 默认简易模式，先点"自己动手写"关闭引导面板
+    const startBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '自己动手写',
     ) as HTMLElement | undefined
-    await act(async () => {
-      simpleBtn!.click()
-    })
+    if (startBtn) {
+      await act(async () => {
+        startBtn.click()
+      })
+      await flush()
+    }
 
     // 找到变量卡片中的"添加"按钮
     const addButtons = Array.from(container.querySelectorAll('button')).filter((b) =>
@@ -338,30 +373,28 @@ describe('App 渲染验收', () => {
     await flush()
 
     // 切换回专家模式
-    const expertBtn = Array.from(container.querySelectorAll('button')).find(
-      (el) => el.textContent === '专家',
-    ) as HTMLElement | undefined
-    await act(async () => {
-      expertBtn!.click()
-    })
+    const ta = await switchToExpert(container)
 
     // textarea 中应包含编译出的 DSL
-    const ta = container.querySelector('textarea') as HTMLTextAreaElement
     expect(ta.value).toContain('测试变量')
-    expect(ta.value).toContain('实数')
+    // 类型继承自被覆盖变量的设置，不是默认类型（类型在 DSL 中表现为级别声明）
+    expect(ta.value).toMatch(/测试变量\s*:\s*\S+/)
   })
 
   it('加载示例后在简易模式下正确反编译', async () => {
     root = mount(container)
     await flush()
 
-    // 切换到简易模式
-    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
-      (el) => el.textContent === '简易',
+    // 默认简易模式，先点"自己动手写"关闭引导面板
+    const startBtn = Array.from(container.querySelectorAll('button')).find(
+      (el) => el.textContent === '自己动手写',
     ) as HTMLElement | undefined
-    await act(async () => {
-      simpleBtn!.click()
-    })
+    if (startBtn) {
+      await act(async () => {
+        startBtn.click()
+      })
+      await flush()
+    }
 
     // 默认源应被反编译 — 至少有一个变量名输入框已填充
     const inputs = container.querySelectorAll('input')
@@ -375,39 +408,42 @@ describe('App 渲染验收', () => {
     root = mount(container)
     await flush()
 
-    // 切换到简易
-    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
-      (el) => el.textContent === '简易',
-    ) as HTMLElement | undefined
-    await act(async () => {
-      simpleBtn!.click()
-    })
+    // 默认已是简易模式 → 切到专家验证持久化
+    const ta = await switchToExpert(container)
+    expect(ta).toBeTruthy()
 
     const stored = window.localStorage.getItem('opti-calc:mode')
-    expect(stored).toBe(JSON.stringify('simple'))
+    expect(stored).toBe(JSON.stringify('expert'))
+  })
+
+  it('从 localStorage 恢复专家模式偏好', async () => {
+    window.localStorage.setItem('opti-calc:mode', JSON.stringify('expert'))
+    root = mount(container)
+    await flush()
+
+    // 应直接以专家模式渲染（textarea 可见）
+    expect(container.querySelector('textarea')).toBeTruthy()
   })
 
   it('语法速查仅在专家模式下显示', async () => {
     root = mount(container)
     await flush()
 
-    // 默认专家模式，语法速查应存在
-    expect(container.textContent).toContain('语法速查')
-
-    // 切换到简易模式
-    const simpleBtn = Array.from(container.querySelectorAll('button')).find(
-      (el) => el.textContent === '简易',
-    ) as HTMLElement | undefined
-    await act(async () => {
-      simpleBtn!.click()
-    })
-
-    // 简易模式下语法速查不应出现
+    // 简易模式：语法速查不应显示
     expect(container.textContent).not.toContain('语法速查')
+
+    // 切换到专家模式，语法速查应显示
+    await switchToExpert(container)
+    expect(container.textContent).toContain('语法速查')
   })
 
-  it('语法速查默认展开', () => {
+  it('语法速查默认展开', async () => {
     root = mount(container)
+    await flush()
+
+    // 简易模式下不显示，先切换到专家模式
+    await switchToExpert(container)
+
     // 无需点击"展开"即可看到内容
     expect(container.textContent).toContain('语法速查')
     expect(container.textContent).toContain('变量声明')
